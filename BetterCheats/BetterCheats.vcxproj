@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Client Debug|x64">
@@ -129,6 +129,8 @@
     <ClCompile Include="player_movement.cpp" />
     <ClCompile Include="player_skills.cpp" />
     <ClCompile Include="player_tools.cpp" />
+    <ClCompile Include="drone_audio.cpp" />
+    <ClCompile Include="player_weapons.cpp" />
     <ClCompile Include="plugin.cpp" />
     <ClCompile Include="plugin_config.cpp" />
     <ClCompile Include="session_config.cpp" />
@@ -157,10 +159,13 @@
     <ClInclude Include="player_movement.h" />
     <ClInclude Include="player_skills.h" />
     <ClInclude Include="player_tools.h" />
+    <ClInclude Include="drone_audio.h" />
+    <ClInclude Include="player_weapons.h" />
     <ClInclude Include="plugin.h" />
     <ClInclude Include="plugin_config.h" />
     <ClInclude Include="plugin_helpers.h" />
     <ClInclude Include="session_config.h" />
+    <ClInclude Include="ui_widgets.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="json_fwd.hpp" />
   </ItemGroup>

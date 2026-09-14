@@ -1,5 +1,6 @@
 #include "panel_machines.h"
 #include "machine_power.h"
+#include "drone_audio.h"
 
 namespace BetterCheats::Panels
 {
@@ -19,8 +20,7 @@ namespace BetterCheats::Panels
 
 	void RenderMachines_LogisticDrones(IModLoaderImGui* imgui)
 	{
-		imgui->SeparatorText("Logistic Flight Drones");
-		imgui->TextDisabled("No options yet.");
+		DroneAudio::RenderImGui(imgui);
 	}
 
 	void RenderMachines_RailDrones(IModLoaderImGui* imgui)

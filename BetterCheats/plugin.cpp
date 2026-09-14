@@ -12,9 +12,11 @@
 #include "player_movement.h"
 #include "player_skills.h"
 #include "player_tools.h"
+#include "player_weapons.h"
 #include "world_wave.h"
 #include "world_corporations.h"
 #include "machine_power.h"
+#include "drone_audio.h"
 #include "enemies.h"
 #include "dev_menus.h"
 
@@ -34,6 +36,13 @@ static PluginInfo s_pluginInfo = {
 	PLUGIN_INTERFACE_VERSION,
 	PLUGIN_TARGET_CLIENT
 };
+
+// Loader config-changed callback — lets settings edited in the loader's own UI
+// take effect immediately instead of at the next restart.
+static void OnPluginConfigChanged(const char* section, const char* key, const char* newValue)
+{
+	BetterCheats::Panels::DroneAudio::OnConfigChanged(section, key, newValue);
+}
 
 // Keybind callback — fires on key press to toggle the menu
 static void OnToggleMenuPressed(EModKey /*key*/, EModKeyEvent /*event*/)
@@ -60,9 +69,17 @@ static void OnExperienceLoadComplete()
 	BetterCheats::Panels::Inventory::ApplySavedConfig();
 	BetterCheats::Panels::Movement::ApplySavedConfig();
 	BetterCheats::Panels::Tools::ApplySavedConfig();
+	BetterCheats::Panels::Weapons::ApplySavedConfig();
 	BetterCheats::Panels::Power::ApplySavedConfig();
 	BetterCheats::Panels::Wave::ApplySavedConfig();
 	BetterCheats::Panels::Enemies::ApplySavedConfig();
+	BetterCheats::Panels::DroneAudio::ApplySavedConfig();
+}
+
+// PluginGameThreadCallback wrapper for the hot-reload path above.
+static void OnExperienceLoadCompleteOnGameThread(void* /*context*/)
+{
+	OnExperienceLoadComplete();
 }
 
 // Engine tick — drives continuous cheat effects (e.g. God Mode) regardless of
@@ -84,9 +101,11 @@ static void OnEngineTick(float deltaSeconds)
 	BetterCheats::Panels::Movement::Tick(deltaSeconds);
 	BetterCheats::Panels::Skills::Tick(deltaSeconds);
 	BetterCheats::Panels::Tools::Tick(deltaSeconds);
+	BetterCheats::Panels::Weapons::Tick(deltaSeconds);
 	BetterCheats::Panels::Wave::Tick(deltaSeconds);
 	BetterCheats::Panels::Corporations::Tick(deltaSeconds);
 	BetterCheats::Panels::Enemies::Tick(deltaSeconds);
+	BetterCheats::Panels::DroneAudio::Tick(deltaSeconds);
 
 #if BETTERCHEATS_DEV_BUILD
 	BetterCheats::Panels::DevMenus::Tick(deltaSeconds);
@@ -162,6 +181,9 @@ extern "C" {
 		LOG_INFO("Initializing Enemies panel...");
 		BetterCheats::Panels::Enemies::Initialize();
 
+		LOG_INFO("Initializing Drone Audio panel...");
+		BetterCheats::Panels::DroneAudio::Initialize();
+
 #if BETTERCHEATS_DEV_BUILD
 		LOG_INFO("Initializing Dev Cheat Manager panel (debug build)...");
 		BetterCheats::Panels::DevMenus::Initialize();
@@ -174,15 +196,25 @@ extern "C" {
 		const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 		self->hooks->Input->RegisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
 
+		self->hooks->UI->RegisterOnConfigChanged(self, &OnPluginConfigChanged);
+
 		self->hooks->Engine->RegisterOnTick(&OnEngineTick);
 		self->hooks->World->RegisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
 
 		// Hot-reload: experience-load-complete may have already fired before we
 		// registered, so if a session is already in progress, run the same setup now.
+		//
+		// It has to go through the game thread. SessionConfig::Reload() resolves the
+		// save name via UCrSaveSubsystem, which only works there -- called inline from
+		// PluginInit it returns false, OnExperienceLoadComplete() bails, and every
+		// panel's ApplySavedConfig is skipped. The failure is silent, and because
+		// SessionConfig::Set() no-ops while unloaded, NOTHING persists for the rest of
+		// the session. Same PostToGameThread pattern used by machine_power.cpp,
+		// player_attributes.cpp and player_items.cpp.
 		if (BetterCheats::GameContext::IsInChimeraMain())
 		{
-			LOG_INFO("BetterCheats: hot-reloaded into an active session — running experience-load setup now.");
-			OnExperienceLoadComplete();
+			LOG_INFO("BetterCheats: hot-reloaded into an active session — posting experience-load setup to the game thread.");
+			self->hooks->Engine->PostToGameThread(&OnExperienceLoadCompleteOnGameThread, nullptr);
 		}
 
 		LOG_INFO("BetterCheats initialized — toggle key: %s", toggleKey);
@@ -198,6 +230,7 @@ extern "C" {
 		{
 			const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 			g_self->hooks->Input->UnregisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
+			g_self->hooks->UI->UnregisterOnConfigChanged(g_self, &OnPluginConfigChanged);
 			g_self->hooks->Engine->UnregisterOnTick(&OnEngineTick);
 			g_self->hooks->World->UnregisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
 		}

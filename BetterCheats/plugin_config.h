@@ -36,6 +36,34 @@ namespace BetterCheatsConfig
 			ConfigValueType::Keybind,
 			kDefaultNoClipKey,
 			"Key to toggle No Clip on / off without opening the menu"
+		},
+		{
+			"DroneAudio",
+			"IdleVolume",
+			ConfigValueType::Float,
+			"1.0",
+			"Volume of the building drone's constant idle hum. 0 is silent, 1 is the game's own mix."
+		},
+		{
+			"DroneAudio",
+			"MovementVolume",
+			ConfigValueType::Float,
+			"1.0",
+			"Volume of the building drone's movement sound. 0 is silent, 1 is the game's own mix."
+		},
+		{
+			"DroneAudio",
+			"RotationVolume",
+			ConfigValueType::Float,
+			"1.0",
+			"Volume of the building drone's rotation sound. 0 is silent, 1 is the game's own mix."
+		},
+		{
+			"DroneAudio",
+			"StationVolume",
+			ConfigValueType::Float,
+			"1.0",
+			"Volume of drone-station audio. 0 is silent, 1 is the game's own mix."
 		}
 	};
 
@@ -65,6 +93,20 @@ namespace BetterCheatsConfig
 		}
 
 		// Cheats are NOT supported in multiplayer and may cause crashes or other undesired effects when enabled.
+		// Drone audio lives in the plugin config rather than per-save state so the
+		// loader's own settings UI surfaces it, and so the choice follows the player
+		// across saves -- a volume preference is not a per-world cheat.
+		static float ReadDroneVolume(const char* key)
+		{
+			return s_self ? s_self->config->ReadFloat(s_self, "DroneAudio", key, 1.0f) : 1.0f;
+		}
+
+		static void WriteDroneVolume(const char* key, float value)
+		{
+			if (s_self)
+				s_self->config->WriteFloat(s_self, "DroneAudio", key, value);
+		}
+
 		static bool IsCheatsInMultiplayerEnabled()
 		{
 			return s_self ? s_self->config->ReadBool(s_self, "General", "EnableCheatsInMultiplayer", false) : false;
