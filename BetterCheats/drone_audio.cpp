@@ -124,6 +124,25 @@ namespace BetterCheats::Panels::DroneAudio
 			g_lastCount = touched;
 		}
 
+		// Set from any thread; consumed by Tick on the game thread.
+		//
+		// ApplyToWorld calls GetAllActorsOfClass, which constructs an FActorIterator,
+		// which asserts it is on the game thread. Calling it straight from a slider
+		// handler -- so a drag was audible immediately -- ran it on the RENDER thread
+		// and tripped that assert:
+		//   FActorIteratorState  [EngineUtils.h:183]  <- check
+		//   UGameplayStatics::execGetAllActorsOfClass
+		//   DroneAudio::ApplyToWorld                  <- us
+		//   DroneAudio::RenderVolRow                  <- render thread
+		// Same rule the movement panel states at the top of its file: RenderImGui only
+		// ever reads, never touches a UObject.
+		bool g_applyWanted = false;
+
+		void RequestApply()
+		{
+			g_applyWanted = true;
+		}
+
 		void ApplyNow()
 		{
 			try { ApplyToWorld(); }
@@ -204,7 +223,7 @@ namespace BetterCheats::Panels::DroneAudio
 				if (*value < 0.0f) *value = 0.0f;
 				if (*value > 1.0f) *value = 1.0f;
 				onChange(*value);
-				ApplyNow();   // audible while you drag, rather than on the next interval
+				RequestApply();   // picked up by Tick on the game thread
 			}
 
 			imgui->TableSetColumnIndex(2);
@@ -212,7 +231,7 @@ namespace BetterCheats::Panels::DroneAudio
 			{
 				*value = 1.0f;
 				onChange(1.0f);
-				ApplyNow();
+				RequestApply();
 			}
 			if (imgui->IsItemHovered())
 				imgui->SetTooltip("Back to the game's own volume.");
@@ -247,18 +266,28 @@ namespace BetterCheats::Panels::DroneAudio
 			return;
 
 		LoadFromConfig();
-		ApplyNow();
+		RequestApply();
 	}
 
 	void ApplySavedConfig()
 	{
 		LoadFromConfig();
 		if (IsActive())
-			ApplyNow();
+			RequestApply();
 	}
 
 	void Tick(float deltaSeconds)
 	{
+		// A queued request is honoured immediately, so dragging a slider still sounds
+		// instant -- it just crosses to the game thread first.
+		if (g_applyWanted)
+		{
+			g_applyWanted = false;
+			g_timer       = 0.0f;
+			ApplyNow();
+			return;
+		}
+
 		if (!IsActive())
 			return;
 
