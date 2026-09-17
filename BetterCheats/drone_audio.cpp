@@ -44,6 +44,7 @@ namespace BetterCheats::Panels::DroneAudio
 		float g_master         = 1.0f;   // convenience: writes all four at once
 		float g_timer          = 0.0f;
 		int   g_lastCount      = 0;
+		int   g_writesLastPass = 0;   // how many components actually needed changing
 
 		bool IsVolActive(int v)
 		{
@@ -57,10 +58,21 @@ namespace BetterCheats::Panels::DroneAudio
 			return false;
 		}
 
+		// Compare before writing.
+		//
+		// SetVolumeMultiplier is not free of side effects -- re-asserting a value the
+		// component already had, twice a second, was audible as a faint cycling
+		// on/off artifact even with the volume at zero. Reading VolumeMultiplier back
+		// and writing only on a real difference makes the steady state completely
+		// silent, and still catches a drone that spawned since the last pass or a
+		// value the game reset underneath us.
 		void SetComponentVolume(SDK::UAudioComponent* audio, float volume)
 		{
-			if (audio)
-				audio->SetVolumeMultiplier(volume);
+			if (!audio) return;
+			if (std::fabs(audio->VolumeMultiplier - volume) <= kActiveEpsilon) return;
+
+			audio->SetVolumeMultiplier(volume);
+			++g_writesLastPass;
 		}
 
 		bool NameHasDrone(SDK::UObject* obj)
@@ -82,6 +94,7 @@ namespace BetterCheats::Panels::DroneAudio
 			if (!world) return;
 
 			int touched = 0;
+			g_writesLastPass = 0;
 
 			// The piloted drone -- three separately addressable components.
 			{
