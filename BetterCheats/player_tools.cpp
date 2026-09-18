@@ -6,6 +6,7 @@
 
 #include "Chimera_classes.hpp"
 
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 
@@ -34,16 +35,17 @@ namespace BetterCheats::Panels::Tools
 		constexpr float kActiveEpsilon = 0.0001f;
 
 		// Scales the game's own mining damage instead of replacing it, so the tool
-		// still respects weak spots and per-ore resistances. 1.0 = untouched.
-		float    g_damageMultiplier  = 1.0f;
+		// still respects weak spots and per-ore resistances. 1.0 = untouched. Written
+		// from RenderImGui, read every tick from Tick and from the hooked detour below.
+		std::atomic<float> g_damageMultiplier{ 1.0f };
 
 		// UCrMiningBoostAttributeSet on the character. Unlike the two hooks above this
 		// is a plain attribute write -- no byte-pattern scanning, so it cannot break
 		// from pattern drift on a game update. 1.0 = untouched.
-		float    g_miningBoostValue  = 1.0f;
+		std::atomic<float> g_miningBoostValue{ 1.0f };
 
-		bool DamageMultActive() { return std::fabs(g_damageMultiplier - 1.0f) > kActiveEpsilon; }
-		bool MiningBoostActive() { return std::fabs(g_miningBoostValue  - 1.0f) > kActiveEpsilon; }
+		bool DamageMultActive() { return std::fabs(g_damageMultiplier.load() - 1.0f) > kActiveEpsilon; }
+		bool MiningBoostActive() { return std::fabs(g_miningBoostValue.load()  - 1.0f) > kActiveEpsilon; }
 
 		float __fastcall Detour_GetMiningDamage(void* self, bool isHittingWeakSpot)
 		{
@@ -51,7 +53,7 @@ namespace BetterCheats::Panels::Tools
 				return 10000.0f;
 
 			const float base = g_originalGetMiningDamage(self, isHittingWeakSpot);
-			return DamageMultActive() ? base * g_damageMultiplier : base;
+			return DamageMultActive() ? base * g_damageMultiplier.load() : base;
 		}
 
 		void __fastcall Detour_UpdateRepHarvesterHeatStack(void* self)
@@ -143,17 +145,18 @@ namespace BetterCheats::Panels::Tools
 		// Current because the game clamps Current against it.
 		if (MiningBoostActive())
 		{
+			const float boostValue = g_miningBoostValue.load();
 			try
 			{
 				if (SDK::UCrMiningBoostAttributeSet* boost = character->MiningBoostAttributes)
 				{
-					if (boost->MaxBoostMultiplierValue.CurrentValue < g_miningBoostValue)
+					if (boost->MaxBoostMultiplierValue.CurrentValue < boostValue)
 					{
-						boost->MaxBoostMultiplierValue.BaseValue    = g_miningBoostValue;
-						boost->MaxBoostMultiplierValue.CurrentValue = g_miningBoostValue;
+						boost->MaxBoostMultiplierValue.BaseValue    = boostValue;
+						boost->MaxBoostMultiplierValue.CurrentValue = boostValue;
 					}
-					boost->CurrentBoostMultiplierValue.BaseValue    = g_miningBoostValue;
-					boost->CurrentBoostMultiplierValue.CurrentValue = g_miningBoostValue;
+					boost->CurrentBoostMultiplierValue.BaseValue    = boostValue;
+					boost->CurrentBoostMultiplierValue.CurrentValue = boostValue;
 				}
 			}
 			catch (...) {}
@@ -204,8 +207,8 @@ namespace BetterCheats::Panels::Tools
 
 		g_overload            = SessionConfig::Get("playerTools.overloadMining", false);
 		g_noDrillOverheat     = SessionConfig::Get("playerTools.noDrillOverheat", false);
-		g_damageMultiplier    = SessionConfig::Get("playerTools.miningDamageMult.value", 1.0f);
-		g_miningBoostValue    = SessionConfig::Get("playerTools.miningBoost.value", 1.0f);
+		g_damageMultiplier.store(SessionConfig::Get("playerTools.miningDamageMult.value", 1.0f));
+		g_miningBoostValue.store(SessionConfig::Get("playerTools.miningBoost.value", 1.0f));
 
 		LOG_INFO("Tools: applied saved config for session '%s'.", SessionConfig::GetSessionName().c_str());
 	}
@@ -262,13 +265,17 @@ namespace BetterCheats::Panels::Tools
 			imgui->TableSetColumnIndex(1);
 			imgui->BeginDisabled(g_overload);
 			imgui->SetNextItemWidth(-1.0f);
-			if (imgui->SliderFloat("##value", &g_damageMultiplier, 0.1f, 25.0f, "%.2fx"))
-				SessionConfig::Set("playerTools.miningDamageMult.value", g_damageMultiplier);
+			float damageMultiplier = g_damageMultiplier.load();
+			if (imgui->SliderFloat("##value", &damageMultiplier, 0.1f, 25.0f, "%.2fx"))
+			{
+				g_damageMultiplier.store(damageMultiplier);
+				SessionConfig::Set("playerTools.miningDamageMult.value", damageMultiplier);
+			}
 			imgui->EndDisabled();
 			imgui->TableSetColumnIndex(2);
 			if (BetterCheats::UI::ResetButton(imgui, "##reset"))
 			{
-				g_damageMultiplier = 1.0f;
+				g_damageMultiplier.store(1.0f);
 				SessionConfig::Set("playerTools.miningDamageMult.value", 1.0f);
 			}
 			if (imgui->IsItemHovered())
@@ -286,12 +293,16 @@ namespace BetterCheats::Panels::Tools
 				                  "An attribute write rather than a hook, so a game update cannot break it.");
 			imgui->TableSetColumnIndex(1);
 			imgui->SetNextItemWidth(-1.0f);
-			if (imgui->SliderFloat("##value", &g_miningBoostValue, 0.1f, 10.0f, "%.2fx"))
-				SessionConfig::Set("playerTools.miningBoost.value", g_miningBoostValue);
+			float miningBoostValue = g_miningBoostValue.load();
+			if (imgui->SliderFloat("##value", &miningBoostValue, 0.1f, 10.0f, "%.2fx"))
+			{
+				g_miningBoostValue.store(miningBoostValue);
+				SessionConfig::Set("playerTools.miningBoost.value", miningBoostValue);
+			}
 			imgui->TableSetColumnIndex(2);
 			if (BetterCheats::UI::ResetButton(imgui, "##reset"))
 			{
-				g_miningBoostValue = 1.0f;
+				g_miningBoostValue.store(1.0f);
 				SessionConfig::Set("playerTools.miningBoost.value", 1.0f);
 			}
 			if (imgui->IsItemHovered())
