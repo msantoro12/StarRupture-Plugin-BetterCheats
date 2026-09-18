@@ -7,9 +7,11 @@
 #include "Chimera_classes.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -20,9 +22,6 @@ namespace BetterCheats::Panels::Weapons
 		// ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp
 		constexpr int kWeaponsTableFlags = (1 << 6) | (1 << 9) | (3 << 13);
 
-		// ImGuiCol_ index (same convention as player_attributes.cpp's Col_* constants)
-		constexpr int Col_Text = 0;
-
 		// Damage multiplier used by "One Hit Kill". Mirrors the flat 10000 the mining
 		// laser hook uses in player_tools.cpp.
 		constexpr float kOneHitKillDamage = 10000.0f;
@@ -31,12 +30,10 @@ namespace BetterCheats::Panels::Weapons
 		// separate enable toggle to keep in sync -- resetting a row IS disabling it.
 		constexpr float kActiveEpsilon = 0.0001f;
 
-		// ---------------------------------------------------------------------
-		// Attribute table -- FGameplayAttributeData on UCrWeaponAttributeSet, reached
-		// via ACrCharacterPlayerBase::WeaponAttributes. The set belongs to the CHARACTER
-		// and applies to whatever is equipped, so per-weapon profiles work by writing
-		// the equipped weapon's profile every tick.
-		// ---------------------------------------------------------------------
+		// FGameplayAttributeData on UCrWeaponAttributeSet, reached via
+		// ACrCharacterPlayerBase::WeaponAttributes. The set belongs to the character and
+		// applies to whatever is equipped, so per-weapon profiles work by writing the
+		// equipped weapon's profile every tick.
 		using WeaponAttr = SDK::FGameplayAttributeData SDK::UCrWeaponAttributeSet::*;
 
 		struct AttrDef
@@ -81,10 +78,8 @@ namespace BetterCheats::Panels::Weapons
 			  1.0f, 1.00f,  10.0f, 1.0f,  "%.0f",  "Projectile piercing -- how many enemies one shot passes through." },
 		};
 
-		// ---------------------------------------------------------------------
-		// Presets. `match` is a lowercase substring tested against the weapon's asset
-		// name; "" offers the preset on every weapon. Entries end at attr < 0.
-		// ---------------------------------------------------------------------
+		// `match` is a lowercase substring tested against the weapon's asset name; ""
+		// offers the preset on every weapon. Entries end at attr < 0.
 		struct PresetVal { int attr; float value; };
 
 		struct Preset
@@ -128,11 +123,9 @@ namespace BetterCheats::Panels::Weapons
 		};
 		constexpr int kPresetCount = static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0]));
 
-		// ---------------------------------------------------------------------
 		// Profiles are DISCOVERED, not hardcoded. Weapon data assets live in the paks
 		// (no I_*DataItem_C classes exist in the SDK dump), so the only truthful source
 		// of the roster is what the player actually equips.
-		// ---------------------------------------------------------------------
 		struct Profile
 		{
 			std::string key;        // sanitized, used as the config path segment
@@ -143,62 +136,37 @@ namespace BetterCheats::Panels::Weapons
 			bool        infiniteMagazine = false;
 		};
 
-		std::vector<Profile> g_profiles;
-		bool        g_allInfiniteMagazine = false;
+		// g_profiles is written from Tick (discovery, ApplySavedConfig) and iterated
+		// with live Profile& references from RenderImGui on the render thread -- a
+		// push_back from one side while the other holds a reference is a
+		// use-after-free on reallocation. g_profilesMutex guards every access to the
+		// container; callers of FindOrCreateProfile/EnsureBuiltInProfiles/
+		// PersistKnownWeapons below must already hold it.
+		std::mutex            g_profilesMutex;
+		std::vector<Profile>  g_profiles;
+		std::atomic<bool>     g_allInfiniteMagazine{ false };
 
 		// Live readout, refreshed from Tick so the panel can show what the game actually
-		// reports rather than what we hoped it would.
-		float       g_dbgMag           = -1.0f;
-		float       g_dbgMagMax        = -1.0f;
-		float       g_dbgReserve       = -1.0f;
-		float       g_dbgReserveMax    = -1.0f;
-		float       g_dbgAttrAmmoBase  = -1.0f;
-		float       g_dbgAttrAmmoCur   = -1.0f;
+		// reports rather than what we hoped it would. Read from RenderImGui.
+		std::atomic<float>    g_dbgMag       { -1.0f };
+		std::atomic<float>    g_dbgMagMax    { -1.0f };
+		std::atomic<float>    g_dbgReserve   { -1.0f };
+		std::atomic<float>    g_dbgReserveMax{ -1.0f };
 
-		float       g_dbgTakeAmmo      = -1.0f;
-		float       g_dbgTakeMagAmmo   = -1.0f;
-		float       g_dbgReloadAmmo    = -1.0f;
-
-		// ---------------------------------------------------------------------
-		// Auto-restock.
-		//
-		// The reserve pool IS inventory items -- proven in game: with an empty
-		// inventory the weapon would not fire or reload no matter which gameplay
-		// attribute was written, because the reload gate checks real items before any
-		// cost is applied. So the only way to have reloading work forever is to keep
-		// the weapon's own ammo item topped up.
-		//
-		// Which item that is comes from the weapon itself: UAuWeaponItemDataBase::
-		// RequiredItem, so this follows whatever you are holding without a hardcoded
-		// table of ammo types.
-		//
-		// EVENT-DRIVEN, NOT TIMED. The count is read every frame, but a write only ever
-		// happens on the EDGE where the count has actually gone DOWN, and it adds back
-		// exactly the amount that went missing. Nothing is topped up "towards a target"
-		// on a clock.
-		//
-		// That distinction is what makes a repeat of the flood structurally impossible
-		// rather than merely unlikely. The original filled ~25 slots with 999 rounds
-		// because it added every tick and judged success with a getter that did not
-		// reflect items added the same frame -- so it never saw itself succeed and kept
-		// going. Under the delta rule a stale read can only make us MISS a top-up (count
-		// looks unchanged, so nothing is added); it can never make us repeat one, because
-		// a repeat needs the count to fall twice.
-		//
-		// Backstops kept for the cases the delta rule cannot see: a convergence guard
-		// that switches the feature off if adds stop landing, and a session cap.
-		// ---------------------------------------------------------------------
-		bool  g_autoRestock      = false;
-		bool  g_restockHidden    = true;    // prefer the hidden inventory: no visible slot
-		float g_restockMags      = 3.0f;    // size of the one-off seed, in magazines
-		int   g_restockFailures  = 0;       // consecutive adds that did not raise the count
-		int   g_restockTotal     = 0;       // rounds replaced this session, for the readout
+		// Reserve ammo is an inventory item, not an attribute, so an empty inventory
+		// blocks reload whatever is written to attributes. Tops up only on an observed
+		// decrease: a stale read can miss a top-up, never repeat one.
+		std::atomic<bool>  g_autoRestock     { false };
+		std::atomic<bool>  g_restockHidden   { true };    // prefer the hidden inventory: no visible slot
+		std::atomic<float> g_restockMags     { 3.0f };    // size of the one-off seed, in magazines
+		std::atomic<int>   g_restockFailures { 0 };       // consecutive adds that did not raise the count
+		std::atomic<int>   g_restockTotal    { 0 };       // rounds replaced this session, for the readout
 
 		// Edge-detection state. Reset whenever the ammo type changes, because a count of
 		// pistol rounds says nothing about rifle rounds.
-		SDK::UAuItemDataBase* g_restockItem  = nullptr;
-		int                   g_restockLast  = -1;
-		bool                  g_restockSeeded = false;
+		std::atomic<SDK::UAuItemDataBase*> g_restockItem  { nullptr };
+		std::atomic<int>                   g_restockLast  { -1 };
+		std::atomic<bool>                  g_restockSeeded{ false };
 
 		constexpr int   kRestockMaxFailures     = 3;
 		constexpr int   kRestockSessionCap      = 20000;
@@ -241,8 +209,8 @@ namespace BetterCheats::Panels::Weapons
 		void RestockEquippedAmmo(SDK::ACrCharacterPlayerBase* character,
 		                         SDK::UCrWeaponComponent* ws, float maxMag)
 		{
-			if (g_restockFailures >= kRestockMaxFailures) return;
-			if (g_restockTotal    >= kRestockSessionCap)  return;
+			if (g_restockFailures.load() >= kRestockMaxFailures) return;
+			if (g_restockTotal.load()    >= kRestockSessionCap)  return;
 
 			SDK::UAuItemDataBase* ammo = ResolveAmmoItem(ws->LastEquippedWeaponData);
 			if (!ammo) return;   // tools and anything with no declared ammo type
@@ -252,7 +220,8 @@ namespace BetterCheats::Panels::Weapons
 
 			// The hidden inventory is tried first: if reloads can draw from it, the
 			// reserve is real but costs no visible slot.
-			SDK::UCrInventoryComponent* target = g_restockHidden
+			const bool restockHidden = g_restockHidden.load();
+			SDK::UCrInventoryComponent* target = restockHidden
 				? character->HiddenInventoryComponent
 				: character->InventoryComponent;
 			if (!target) target = character->InventoryComponent;
@@ -262,33 +231,37 @@ namespace BetterCheats::Panels::Weapons
 
 			// Switching weapons switches ammo type. Re-baseline rather than comparing
 			// rifle rounds against a pistol count.
-			if (ammo != g_restockItem)
+			bool seeded = g_restockSeeded.load();
+			int  last   = g_restockLast.load();
+			if (ammo != g_restockItem.load())
 			{
-				g_restockItem   = ammo;
-				g_restockLast   = have;
-				g_restockSeeded = false;
+				g_restockItem.store(ammo);
+				last = have;
+				g_restockLast.store(last);
+				seeded = false;
+				g_restockSeeded.store(false);
 			}
 
 			int amount = 0;
 
-			if (!g_restockSeeded)
+			if (!seeded)
 			{
 				// One-off seed, so switching this on with empty pockets gives you
 				// something to reload from. After this, only consumption drives it.
-				const int want = static_cast<int>(maxMag * g_restockMags + 0.5f);
+				const int want = static_cast<int>(maxMag * g_restockMags.load() + 0.5f);
 				amount = (have < want) ? (want - have) : 0;
-				g_restockSeeded = true;
+				g_restockSeeded.store(true);
 			}
-			else if (have < g_restockLast)
+			else if (have < last)
 			{
 				// THE EVENT: ammo actually left the inventory. Replace exactly that
 				// much -- never a target, never a guess.
-				amount = g_restockLast - have;
+				amount = last - have;
 			}
 
 			if (amount <= 0)
 			{
-				g_restockLast = have;   // count rose (picked up, crafted) -- just follow it
+				g_restockLast.store(have);   // count rose (picked up, crafted) -- just follow it
 				return;
 			}
 
@@ -305,30 +278,30 @@ namespace BetterCheats::Panels::Weapons
 			// beats one that fills every slot you own.
 			if (gained <= 0)
 			{
-				if (++g_restockFailures >= kRestockMaxFailures)
+				if (g_restockFailures.fetch_add(1) + 1 >= kRestockMaxFailures)
 				{
-					g_autoRestock = false;
+					g_autoRestock.store(false);
 					SessionConfig::Set("playerWeapons.autoRestock", false);
 					LOG_WARN("Weapons: auto-restock disabled itself -- %d adds of '%s' returned "
 						"nothing (target %s inventory).",
 						kRestockMaxFailures, ammo->GetName().c_str(),
-						g_restockHidden ? "hidden" : "visible");
+						restockHidden ? "hidden" : "visible");
 				}
-				g_restockLast = have;
+				g_restockLast.store(have);
 				return;
 			}
 
-			g_restockFailures = 0;
-			g_restockTotal   += gained;
+			g_restockFailures.store(0);
+			g_restockTotal.fetch_add(gained);
 
 			// Re-read rather than assuming have+gained. If the count lags a frame the
 			// worst case is a missed top-up next frame, not a repeated one.
-			g_restockLast = character->GetItemCount(ammo);
+			g_restockLast.store(character->GetItemCount(ammo));
 		}
-		int         g_activeProfile       = -1;   // index into g_profiles, -1 = nothing equipped
-		int         g_viewedProfile       = -1;
-		bool        g_configApplied       = false;   // set once ApplySavedConfig has run
-		std::string g_detectedWeapon      = "(none)";
+
+		// Written from Tick (weapon detection); read from RenderImGui for tab focus.
+		std::atomic<int> g_activeProfile{ -1 };   // index into g_profiles, -1 = nothing equipped
+		bool             g_configApplied = false; // set once ApplySavedConfig has run; game-thread only
 
 		bool IsActive(int attr, float value)
 		{
@@ -353,34 +326,9 @@ namespace BetterCheats::Panels::Weapons
 			return lowered.find("tool") == std::string::npos;
 		}
 
-		// ---------------------------------------------------------------------
-		// Infinite ammo -- why it is done by pinning the magazine.
-		//
-		// Three mechanisms exist. Only one of them holds:
-		//
-		//   1. Pin the magazine to its maximum (SetEquippedWeaponCurrentAmmo). WORKS.
-		//      The magazine never empties, so the weapon never reloads, so the reserve
-		//      pool is never drawn from -- you can carry no ammo at all. This is what
-		//      the panel ships.
-		//
-		//   2. Pin the reserve pool (UAuWeaponAttributeSet::Ammo, reachable because
-		//      UCrWeaponAttributeSet derives from it). DOES NOT WORK. That attribute is
-		//      flagged Net/RepNotify -- server-authoritative -- so a client-side write
-		//      is overwritten on the next replication tick. Worth knowing: every Cr
-		//      multiplier this panel writes successfully carries NO Net flag, and that
-		//      difference is the whole reason those stick and this one does not. The
-		//      float return type of GetEquippedWeaponAmmoInInventory is a red herring;
-		//      it reads a replicated attribute, not an inventory item.
-		//
-		//   3. Zero the per-shot cost (UAuWeaponItemDataBase::AmmoCost). Works, but it
-		//      writes to a CDO shared by every instance of that weapon, and from the
-		//      player's side behaves identically to (1). Not worth the shared-state risk.
-		// ---------------------------------------------------------------------
-
 		// The game's weapon roster, so every tab is present from the start and a weapon
-		// can be tuned without first going and equipping it. These are the asset names
-		// the game actually reports (confirmed from UCrWeaponComponent at runtime);
-		// discovery still runs, so anything not listed here still gets its own tab.
+		// can be tuned without first going and equipping it. Discovery still runs, so
+		// anything not listed here still gets its own tab.
 		const char* kBuiltInWeapons[] = {
 			"Default__I_PistolDataItem_C",
 			"Default__I_RifleDataItem_C",
@@ -449,6 +397,7 @@ namespace BetterCheats::Panels::Weapons
 			p.infiniteMagazine = SessionConfig::Get(ConfigKey(p, "infiniteMagazine", "enabled"), false);
 		}
 
+		// Caller must hold g_profilesMutex.
 		void PersistKnownWeapons()
 		{
 			if (!SessionConfig::IsLoaded())
@@ -462,6 +411,7 @@ namespace BetterCheats::Panels::Weapons
 		int FindOrCreateProfile(const std::string& rawName);
 
 		// Make sure every known weapon has a tab, whether or not it has been equipped.
+		// Caller must hold g_profilesMutex.
 		void EnsureBuiltInProfiles()
 		{
 			static bool s_done = false;
@@ -471,6 +421,7 @@ namespace BetterCheats::Panels::Weapons
 				FindOrCreateProfile(kBuiltInWeapons[i]);
 		}
 
+		// Caller must hold g_profilesMutex.
 		int FindOrCreateProfile(const std::string& rawName)
 		{
 			const std::string key = Sanitize(rawName);
@@ -528,7 +479,10 @@ namespace BetterCheats::Panels::Weapons
 		if (!g_configApplied && SessionConfig::IsLoaded())
 			ApplySavedConfig();
 
-		EnsureBuiltInProfiles();
+		{
+			std::lock_guard<std::mutex> lock(g_profilesMutex);
+			EnsureBuiltInProfiles();
+		}
 
 		SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
 		if (!character || !character->WeaponSystem)
@@ -537,17 +491,30 @@ namespace BetterCheats::Panels::Weapons
 		if (SDK::UCrWeaponItemDataBase* data = character->WeaponSystem->LastEquippedWeaponData)
 		{
 			const std::string raw = data->GetName();
-			if (raw != g_detectedWeapon)
-				g_detectedWeapon = raw;
 
 			// Holding a tool leaves no active weapon profile, so nothing is applied.
-			g_activeProfile = IsWeaponAsset(raw) ? FindOrCreateProfile(raw) : -1;
+			if (IsWeaponAsset(raw))
+			{
+				std::lock_guard<std::mutex> lock(g_profilesMutex);
+				g_activeProfile.store(FindOrCreateProfile(raw));
+			}
+			else
+			{
+				g_activeProfile.store(-1);
+			}
 		}
 
-		if (g_activeProfile < 0 || g_activeProfile >= static_cast<int>(g_profiles.size()))
-			return;
-
-		const Profile& profile = g_profiles[g_activeProfile];
+		// Copy the active profile out under the lock instead of keeping a reference
+		// into g_profiles across the SDK calls below -- a newly discovered weapon can
+		// push_back and reallocate the vector from another Tick call.
+		Profile profile;
+		{
+			std::lock_guard<std::mutex> lock(g_profilesMutex);
+			const int active = g_activeProfile.load();
+			if (active < 0 || active >= static_cast<int>(g_profiles.size()))
+				return;
+			profile = g_profiles[active];
+		}
 
 		try
 		{
@@ -562,46 +529,30 @@ namespace BetterCheats::Panels::Weapons
 
 				if (profile.oneHitKill)
 					WriteAttribute(weapons->*kAttrs[kAttrDamage].member, kOneHitKillDamage);
-
-				g_dbgAttrAmmoBase = weapons->Ammo.BaseValue;
-				g_dbgAttrAmmoCur  = weapons->Ammo.CurrentValue;
-				g_dbgTakeAmmo     = weapons->TakeAmmo.CurrentValue;
-				g_dbgTakeMagAmmo  = weapons->TakeMagazineAmmo.CurrentValue;
-				g_dbgReloadAmmo   = weapons->ReloadAmmo.CurrentValue;
 			}
 
-			// Infinite ammo.
-			//
-			// Holding the magazine at full is the ONLY mechanism here that survives.
-			// Because the magazine never empties, the weapon never reloads, and because
-			// it never reloads the reserve pool is never drawn from -- so you need carry
-			// no ammo at all. That is the whole feature.
-			//
-			// Two other routes were tried and are deliberately not used:
-			//   * UAuWeaponAttributeSet::Ammo (the reserve pool) is flagged Net/RepNotify
-			//     -- server-authoritative. A client write is stomped on the next
-			//     replication tick. The Cr multipliers this panel writes are NOT
-			//     replicated, which is exactly why those stick and that one does not.
-			//   * Zeroing UAuWeaponItemDataBase::AmmoCost works, but it writes to a CDO
-			//     shared by every instance of the weapon and ends up behaving the same as
-			//     this from the player's side. Not worth the shared-state risk.
+			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
+			// tick if written directly; the unreplicated Cr multiplier is what sticks.
+			// Holding the magazine at full is what survives: it never empties, so it never
+			// reloads, so the reserve is never drawn from.
 			SDK::UCrWeaponComponent* ws = character->WeaponSystem;
 
 			const float maxMag = ws->GetEquippedWeaponMaxMagazineAmmo();
-			g_dbgMag        = ws->GetEquippedWeaponCurrentAmmo();
-			g_dbgMagMax     = maxMag;
-			g_dbgReserve    = ws->GetEquippedWeaponAmmoInInventory();
-			g_dbgReserveMax = ws->GetEquippedWeaponMaxAmmo();
+			const float curMag = ws->GetEquippedWeaponCurrentAmmo();
+			g_dbgMag.store(curMag);
+			g_dbgMagMax.store(maxMag);
+			g_dbgReserve.store(ws->GetEquippedWeaponAmmoInInventory());
+			g_dbgReserveMax.store(ws->GetEquippedWeaponMaxAmmo());
 
-			if (g_allInfiniteMagazine || profile.infiniteMagazine)
+			if (g_allInfiniteMagazine.load() || profile.infiniteMagazine)
 			{
-				if (maxMag > 0.0f && g_dbgMag < maxMag)
+				if (maxMag > 0.0f && curMag < maxMag)
 					ws->SetEquippedWeaponCurrentAmmo(maxMag);
 			}
 
 			// Auto-restock. Called every frame, but it only WRITES on the edge where
 			// the ammo count has actually dropped -- see the note above.
-			if (g_autoRestock && maxMag > 0.0f)
+			if (g_autoRestock.load() && maxMag > 0.0f)
 				RestockEquippedAmmo(character, ws, maxMag);
 
 		}
@@ -613,69 +564,85 @@ namespace BetterCheats::Panels::Weapons
 		if (!SessionConfig::IsLoaded())
 			return;
 
-		// Restore previously discovered weapons so their tabs exist before the player
-		// re-equips them.
-		g_profiles.clear();
-		const nlohmann::json known = SessionConfig::Get("playerWeapons.known", nlohmann::json::array());
-		if (known.is_array())
+		size_t profileCount = 0;
 		{
-			bool dropped = false;
-			for (const auto& e : known)
+			std::lock_guard<std::mutex> lock(g_profilesMutex);
+
+			// Restore previously discovered weapons so their tabs exist before the
+			// player re-equips them.
+			g_profiles.clear();
+			const nlohmann::json known = SessionConfig::Get("playerWeapons.known", nlohmann::json::array());
+			if (known.is_array())
 			{
-				Profile p;
-				p.key     = e.value("key", std::string());
-				p.display = e.value("display", std::string());
-				p.raw     = e.value("raw", std::string());
-				if (p.key.empty()) continue;
+				bool dropped = false;
+				for (const auto& e : known)
+				{
+					Profile p;
+					p.key     = e.value("key", std::string());
+					p.display = e.value("display", std::string());
+					p.raw     = e.value("raw", std::string());
+					if (p.key.empty()) continue;
 
-				// Drop tools recorded by an earlier build before they were filtered out.
-				if (!p.raw.empty() && !IsWeaponAsset(p.raw)) { dropped = true; continue; }
+					// Drop tools recorded by an earlier build before they were filtered out.
+					if (!p.raw.empty() && !IsWeaponAsset(p.raw)) { dropped = true; continue; }
 
-				if (p.display.empty()) p.display = p.key;
-				ResetProfileValues(p);
-				g_profiles.push_back(p);
-				LoadProfileFromConfig(g_profiles.back());
+					if (p.display.empty()) p.display = p.key;
+					ResetProfileValues(p);
+					g_profiles.push_back(p);
+					LoadProfileFromConfig(g_profiles.back());
+				}
+				if (dropped)
+					PersistKnownWeapons();
 			}
-			if (dropped)
-				PersistKnownWeapons();
+
+			// ApplySavedConfig() rebuilds the list from config, which may predate the
+			// built-in roster -- re-seed so every weapon still has a tab.
+			for (int i = 0; i < kBuiltInCount; ++i)
+				FindOrCreateProfile(kBuiltInWeapons[i]);
+
+			profileCount = g_profiles.size();
 		}
 
-		g_allInfiniteMagazine = SessionConfig::Get("playerWeapons.allInfiniteMagazine", false);
-		g_autoRestock         = SessionConfig::Get("playerWeapons.autoRestock", false);
-		g_restockHidden       = SessionConfig::Get("playerWeapons.restockHidden", true);
-		g_restockMags         = SessionConfig::Get("playerWeapons.restockMags", 3.0f);
+		g_allInfiniteMagazine.store(SessionConfig::Get("playerWeapons.allInfiniteMagazine", false));
+		g_autoRestock.store(SessionConfig::Get("playerWeapons.autoRestock", false));
+		g_restockHidden.store(SessionConfig::Get("playerWeapons.restockHidden", true));
+		g_restockMags.store(SessionConfig::Get("playerWeapons.restockMags", 3.0f));
 
 		g_configApplied = true;
 
-		// ApplySavedConfig() rebuilds the list from config, which may predate the
-		// built-in roster -- re-seed so every weapon still has a tab.
-		for (int i = 0; i < kBuiltInCount; ++i)
-			FindOrCreateProfile(kBuiltInWeapons[i]);
-
 		LOG_INFO("Weapons: applied saved config for session '%s' (%zu known weapons).",
-			SessionConfig::GetSessionName().c_str(), g_profiles.size());
+			SessionConfig::GetSessionName().c_str(), profileCount);
 	}
 
 	void RenderImGui(IModLoaderImGui* imgui)
 	{
-		EnsureBuiltInProfiles();
+		{
+			std::lock_guard<std::mutex> lock(g_profilesMutex);
+			EnsureBuiltInProfiles();
+		}
 
 		imgui->SeparatorText("Ammo");
 
-		if (imgui->Checkbox("Infinite clip - ALL weapons", &g_allInfiniteMagazine))
-			SessionConfig::Set("playerWeapons.allInfiniteMagazine", g_allInfiniteMagazine);
+		bool allInfiniteMagazine = g_allInfiniteMagazine.load();
+		if (imgui->Checkbox("Infinite clip - ALL weapons", &allInfiniteMagazine))
+		{
+			g_allInfiniteMagazine.store(allInfiniteMagazine);
+			SessionConfig::Set("playerWeapons.allInfiniteMagazine", allInfiniteMagazine);
+		}
 		if (imgui->IsItemHovered())
 			imgui->SetTooltip("Holds the clip at full. It never empties, so it never reloads -- and\n"
 			                  "because it never reloads, your reserve is never drawn from either.\n\n"
 			                  "Per-weapon equivalents are on each weapon's tab below.");
 
-		if (imgui->Checkbox("Keep ammo stocked", &g_autoRestock))
+		bool autoRestock = g_autoRestock.load();
+		if (imgui->Checkbox("Keep ammo stocked", &autoRestock))
 		{
-			SessionConfig::Set("playerWeapons.autoRestock", g_autoRestock);
-			g_restockFailures = 0;
-			g_restockItem     = nullptr;   // re-baseline and re-seed on next tick
-			g_restockLast     = -1;
-			g_restockSeeded   = false;
+			g_autoRestock.store(autoRestock);
+			SessionConfig::Set("playerWeapons.autoRestock", autoRestock);
+			g_restockFailures.store(0);
+			g_restockItem.store(nullptr);   // re-baseline and re-seed on next tick
+			g_restockLast.store(-1);
+			g_restockSeeded.store(false);
 		}
 		if (imgui->IsItemHovered())
 			imgui->SetTooltip("Tops the equipped weapon's own ammo back up so you never run dry.\n"
@@ -684,12 +651,16 @@ namespace BetterCheats::Panels::Weapons
 			                  "It follows whatever you are holding, using the ammo type the weapon\n"
 			                  "itself declares, and only ever adds the shortfall.");
 
-		if (g_autoRestock)
+		if (autoRestock)
 		{
 			imgui->Indent(imgui->GetFrameHeight());
 
-			if (imgui->Checkbox("Keep it out of my inventory", &g_restockHidden))
-				SessionConfig::Set("playerWeapons.restockHidden", g_restockHidden);
+			bool restockHidden = g_restockHidden.load();
+			if (imgui->Checkbox("Keep it out of my inventory", &restockHidden))
+			{
+				g_restockHidden.store(restockHidden);
+				SessionConfig::Set("playerWeapons.restockHidden", restockHidden);
+			}
 			if (imgui->IsItemHovered())
 				imgui->SetTooltip("Stocks the hidden inventory instead of your visible one, so it costs\n"
 				                  "no slot. If reloads cannot draw from there, untick this and it will\n"
@@ -702,22 +673,25 @@ namespace BetterCheats::Panels::Weapons
 			const float frameH = imgui->GetFrameHeight();
 
 			imgui->SetNextItemWidth(textW + (frameH * 2.0f) + (frameH * 0.9f));
-			if (imgui->InputFloat("Clips to keep in reserve", &g_restockMags, 1.0f, 5.0f, "%.0f"))
+			float restockMags = g_restockMags.load();
+			if (imgui->InputFloat("Clips to keep in reserve", &restockMags, 1.0f, 5.0f, "%.0f"))
 			{
-				if (g_restockMags < 1.0f)   g_restockMags = 1.0f;
-				if (g_restockMags > 100.0f) g_restockMags = 100.0f;
-				SessionConfig::Set("playerWeapons.restockMags", g_restockMags);
+				if (restockMags < 1.0f)   restockMags = 1.0f;
+				if (restockMags > 100.0f) restockMags = 100.0f;
+				g_restockMags.store(restockMags);
+				SessionConfig::Set("playerWeapons.restockMags", restockMags);
 			}
 
 			imgui->Unindent(imgui->GetFrameHeight());
 		}
 
-		if (g_dbgMagMax >= 0.0f)
+		const float dbgMagMax = g_dbgMagMax.load();
+		if (dbgMagMax >= 0.0f)
 		{
 			char line[220];
 			snprintf(line, sizeof(line), "  clip %.0f / %.0f      reserve %.0f / %.0f%s",
-				g_dbgMag, g_dbgMagMax, g_dbgReserve, g_dbgReserveMax,
-				g_restockTotal > 0 ? "      [restocking]" : "");
+				g_dbgMag.load(), dbgMagMax, g_dbgReserve.load(), g_dbgReserveMax.load(),
+				g_restockTotal.load() > 0 ? "      [restocking]" : "");
 			imgui->TextDisabled(line);
 		}
 
@@ -726,7 +700,12 @@ namespace BetterCheats::Panels::Weapons
 		imgui->TextDisabled("A value differing from the default is applied. Reset a row to turn it off.");
 		imgui->Spacing();
 
-		if (g_profiles.empty())
+		bool profilesEmpty = false;
+		{
+			std::lock_guard<std::mutex> lock(g_profilesMutex);
+			profilesEmpty = g_profiles.empty();
+		}
+		if (profilesEmpty)
 		{
 			imgui->TextDisabled("No weapons seen yet - equip one and its tab will appear here.");
 			return;
@@ -736,13 +715,19 @@ namespace BetterCheats::Panels::Weapons
 			return;
 
 		static int s_lastFocused = -1;
-		const bool focusChanged = (g_activeProfile != s_lastFocused);
-		s_lastFocused = g_activeProfile;
+		const int activeProfile = g_activeProfile.load();
+		const bool focusChanged = (activeProfile != s_lastFocused);
+		s_lastFocused = activeProfile;
 
 		// Tabs are discovered in equip order, which is arbitrary. Present them in the
 		// order the game itself progresses through them, with tools trailing.
 		static const char* kTabOrder[] = { "pistol", "rifle", "shotgun", "machine" };
 		constexpr int kTabOrderCount = static_cast<int>(sizeof(kTabOrder) / sizeof(kTabOrder[0]));
+
+		// g_profiles is only ever touched under this lock, held for the whole tab loop
+		// below because every Profile& taken from it stays live throughout.
+		{
+		std::lock_guard<std::mutex> profilesLock(g_profilesMutex);
 
 		std::vector<int> order(g_profiles.size());
 		for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
@@ -764,7 +749,7 @@ namespace BetterCheats::Panels::Weapons
 		{
 			const int p = order[oi];
 			Profile& profile = g_profiles[p];
-			const bool isEquipped = (p == g_activeProfile);
+			const bool isEquipped = (p == activeProfile);
 
 			// "###key" keeps the ImGui ID stable while the visible label changes.
 			char label[96];
@@ -775,11 +760,8 @@ namespace BetterCheats::Panels::Weapons
 			if (!imgui->BeginTabItem(label, nullptr, tabFlags))
 				continue;
 
-			g_viewedProfile = p;
 			imgui->PushIDInt(p);
 
-
-			// ---- presets -------------------------------------------------------
 			// A preset writes only into THIS weapon's profile, so every weapon carries its
 			// own independently. `match` gates presets that only make sense on one weapon.
 			const std::string loweredRaw = ToLower(profile.raw);
@@ -936,6 +918,8 @@ namespace BetterCheats::Panels::Weapons
 			imgui->PopID();
 			imgui->EndTabItem();
 		}
+
+		} // profilesLock
 
 		imgui->EndTabBar();
 
