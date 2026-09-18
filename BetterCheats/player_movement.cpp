@@ -1322,15 +1322,14 @@ namespace BetterCheats::Panels::Movement
 			snap = g_snapshot;
 		}
 
-		imgui->SeparatorText("Fly");
+		imgui->SeparatorText("Fly / No-Clip Movement");
 
 		if (!snap.characterFound)
 		{
-			imgui->TextDisabled("Player character not found.");
+			imgui->TextDisabled("Player character not found -- load into a game session.");
 			return;
 		}
 
-		char buffer[160];
 		char currentKey[64];
 		ReadNoClipKey(currentKey, sizeof(currentKey));
 
@@ -1340,35 +1339,53 @@ namespace BetterCheats::Panels::Movement
 
 		if (imgui->BeginTable("##noclip_table", 2, kTableFlags))
 		{
-			imgui->TableSetupColumn("Option", 0,            0.85f);
-			imgui->TableSetupColumn("Value",  kColumnFixed, 190.0f);
+			imgui->TableSetupColumn("Option", 0,            0.45f);
+			imgui->TableSetupColumn("Value",  0,            0.55f);
 
+			// Row 1: Fly Mode toggle + hotkey picker
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
-			snprintf(buffer, sizeof(buffer), "Fly  (%s)", currentKey[0] ? currentKey : "unbound");
-			imgui->Text(buffer);
+			imgui->Text("Fly Mode Toggle:");
+			if (imgui->IsItemHovered())
+				imgui->SetTooltip("Toggle vertical flight mode. Ascend with Space, descend with Left Ctrl.");
+
 			imgui->TableSetColumnIndex(1);
-			if (imgui->Checkbox("##noclip", &noClip))
+			if (imgui->Checkbox("Active##noclip", &noClip))
 				g_noClipWanted.store(noClip);
 
+			imgui->SameLine(0.0f, 12.0f);
+			imgui->Text("Hotkey:");
+			imgui->SameLine(0.0f, 6.0f);
+			char pickedKey[64];
+			if (Keybind::RenderPicker(imgui, "noclip_key_picker", currentKey, pickedKey, sizeof(pickedKey)))
+				ApplyNoClipKey(pickedKey);
+
+			imgui->SameLine(0.0f, 6.0f);
+			if (imgui->SmallButton("Reset##key"))
+			{
+				Keybind::CancelCapture();
+				ApplyNoClipKey(BetterCheatsConfig::kDefaultNoClipKey);
+			}
+
+			// Row 2: Pass through walls (clipping)
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
-			imgui->Text("Pass through walls");
+			imgui->Text("Pass Through Walls (Clipping)");
 			if (imgui->IsItemHovered())
-				imgui->SetTooltip("On: the classic no-clip -- nothing blocks you.\n"
-				                  "Off: you fly, but still collide with the world, so you cannot\n"
-				                  "drop through the floor when you land.\n\n"
-				                  "Takes effect immediately, mid-flight.");
+				imgui->SetTooltip("On: Disable capsule collision to fly through terrain & walls.\n"
+				                  "Off: Retain collision so you can fly around without clipping through floors.");
+
 			imgui->TableSetColumnIndex(1);
-			if (imgui->Checkbox("##passwalls", &ghost))
+			if (imgui->Checkbox("Enabled##passwalls", &ghost))
 			{
 				g_passThroughWalls.store(ghost);
 				SessionConfig::Set("playerMovement.passThroughWalls", ghost);
 			}
 
+			// Row 3: Fly Speed
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
-			imgui->Text("Fly Speed");
+			imgui->Text("Fly Speed Multiplier");
 			imgui->TableSetColumnIndex(1);
 			imgui->SetNextItemWidth(-1.0f);
 			if (imgui->SliderFloat("##fly_speed", &speed, kMinFlySpeedMultiplier, kMaxFlySpeedMultiplier, "%.1fx"))
@@ -1382,38 +1399,36 @@ namespace BetterCheats::Panels::Movement
 
 		imgui->Spacing();
 
-		snprintf(buffer, sizeof(buffer), "Top speed: %.0f cm/s  (base %.0f)", snap.baseFlySpeed * speed, snap.baseFlySpeed);
-		imgui->TextDisabled(buffer);
-
-		imgui->Spacing();
-		imgui->TextWrapped("Look and move as usual to fly horizontally; hold Space to rise and Left Ctrl to "
-			"descend. Vertical input is ignored while this menu is open.");
-
-		imgui->Spacing();
-		imgui->TextColored(1.0f, 0.3f, 0.3f, 1.0f,
-			"Note: Turning Fly off drops the character. Come back above ground "
-			"first, or you will fall through the world until the game respawns you.");
-
-		imgui->Spacing();
-		imgui->SeparatorText("Keybind");
-
-		imgui->AlignTextToFramePadding();
-		imgui->Text("Toggle No Clip");
-		imgui->SameLine(0.0f, 8.0f);
-
-		char picked[64];
-		if (Keybind::RenderPicker(imgui, "noclip_key", currentKey, picked, sizeof(picked)))
-			ApplyNoClipKey(picked);
-
-		imgui->SameLine(0.0f, 8.0f);
-		if (imgui->Button("Reset"))
+		// Flashing Warning Banner when clipping is enabled
+		if (ghost)
 		{
-			Keybind::CancelCapture();
-			ApplyNoClipKey(BetterCheatsConfig::kDefaultNoClipKey);
+			ULONGLONG ticks = GetTickCount64();
+			bool flash = ((ticks / 350) % 2) == 0;
+			imgui->Spacing();
+			if (flash)
+			{
+				imgui->TextColored(1.0f, 0.25f, 0.25f, 1.0f, "[!] WARNING: CLIPPING / PASS THROUGH WALLS IS ACTIVE!");
+				imgui->TextColored(1.0f, 0.85f, 0.2f, 1.0f, "Disabling Fly mode while below ground geometry will cause you to fall through the world!");
+			}
+			else
+			{
+				imgui->TextColored(1.0f, 0.65f, 0.0f, 1.0f, "[!] WARNING: CLIPPING / PASS THROUGH WALLS IS ACTIVE!");
+				imgui->TextColored(0.95f, 0.95f, 0.4f, 1.0f, "Disabling Fly mode while below ground geometry will cause you to fall through the world!");
+			}
+		}
+		else
+		{
+			imgui->Spacing();
+			imgui->TextDisabled("Collision enabled: Safe from falling through terrain when Fly is toggled off.");
 		}
 
 		imgui->Spacing();
-		imgui->TextDisabled("Modifiers count: hold Ctrl, Shift or Alt while pressing the key to bind a combo.");
+		char buffer[160];
+		snprintf(buffer, sizeof(buffer), "Top speed: %.0f cm/s  (base %.0f cm/s)", snap.baseFlySpeed * speed, snap.baseFlySpeed);
+		imgui->TextDisabled(buffer);
+
+		imgui->Spacing();
+		imgui->TextWrapped("Look and move as usual to fly horizontally; hold Space to rise and Left Ctrl to descend. Vertical input is ignored while this menu is open.");
 
 		// ---- attribute presets -------------------------------------------------
 		imgui->Spacing();

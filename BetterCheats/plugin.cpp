@@ -16,7 +16,6 @@
 #include "world_wave.h"
 #include "world_corporations.h"
 #include "machine_power.h"
-#include "drone_audio.h"
 #include "enemies.h"
 #include "dev_menus.h"
 
@@ -39,9 +38,8 @@ static PluginInfo s_pluginInfo = {
 
 // Loader config-changed callback — lets settings edited in the loader's own UI
 // take effect immediately instead of at the next restart.
-static void OnPluginConfigChanged(const char* section, const char* key, const char* newValue)
+static void OnPluginConfigChanged(const char* /*section*/, const char* /*key*/, const char* /*newValue*/)
 {
-	BetterCheats::Panels::DroneAudio::OnConfigChanged(section, key, newValue);
 }
 
 // Keybind callback — fires on key press to toggle the menu
@@ -73,7 +71,6 @@ static void OnExperienceLoadComplete()
 	BetterCheats::Panels::Power::ApplySavedConfig();
 	BetterCheats::Panels::Wave::ApplySavedConfig();
 	BetterCheats::Panels::Enemies::ApplySavedConfig();
-	BetterCheats::Panels::DroneAudio::ApplySavedConfig();
 }
 
 // PluginGameThreadCallback wrapper for the hot-reload path above.
@@ -105,7 +102,6 @@ static void OnEngineTick(float deltaSeconds)
 	BetterCheats::Panels::Wave::Tick(deltaSeconds);
 	BetterCheats::Panels::Corporations::Tick(deltaSeconds);
 	BetterCheats::Panels::Enemies::Tick(deltaSeconds);
-	BetterCheats::Panels::DroneAudio::Tick(deltaSeconds);
 
 #if BETTERCHEATS_DEV_BUILD
 	BetterCheats::Panels::DevMenus::Tick(deltaSeconds);
@@ -180,9 +176,6 @@ extern "C" {
 
 		LOG_INFO("Initializing Enemies panel...");
 		BetterCheats::Panels::Enemies::Initialize();
-
-		LOG_INFO("Initializing Drone Audio panel...");
-		BetterCheats::Panels::DroneAudio::Initialize();
 
 #if BETTERCHEATS_DEV_BUILD
 		LOG_INFO("Initializing Dev Cheat Manager panel (debug build)...");
