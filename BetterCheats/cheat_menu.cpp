@@ -42,7 +42,7 @@ namespace BetterCheats
 {
 	IPluginSelf*      CheatMenu::s_self           = nullptr;
 	PanelHandle       CheatMenu::s_panelHandle    = nullptr;
-	bool              CheatMenu::s_open           = false;
+	std::atomic<bool> CheatMenu::s_open           { false };
 	MenuCategory      CheatMenu::s_activeCategory = MenuCategory::World_Environment;
 	std::atomic<bool> CheatMenu::s_closeRequested { false };
 	void* g_inputCaptureToken				 = nullptr;
@@ -97,8 +97,9 @@ namespace BetterCheats
 	{
 		if (!s_panelHandle || !s_self) return;
 
-		s_open = !s_open;
-		if (s_open)
+		const bool opening = !s_open.load();
+		s_open.store(opening);
+		if (opening)
 		{
 			// Drop any close request left over from before the menu opened, so it
 			// can't be consumed on the very first frame it's visible.

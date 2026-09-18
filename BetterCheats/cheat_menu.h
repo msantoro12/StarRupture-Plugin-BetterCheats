@@ -66,7 +66,7 @@ namespace BetterCheats
 
 		static IPluginSelf*      s_self;
 		static PanelHandle       s_panelHandle;
-		static bool              s_open;
+		static std::atomic<bool> s_open;   // toggled from keybind callbacks, read on the render thread
 		static MenuCategory      s_activeCategory;
 		static std::atomic<bool> s_closeRequested;
 	};
