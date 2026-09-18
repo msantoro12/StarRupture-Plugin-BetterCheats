@@ -1423,8 +1423,11 @@ namespace BetterCheats::Panels::Movement
 		}
 
 		imgui->Spacing();
-		char buffer[160];
-		snprintf(buffer, sizeof(buffer), "Top speed: %.0f cm/s  (base %.0f cm/s)", snap.baseFlySpeed * speed, snap.baseFlySpeed);
+		char buffer[220];
+		float topCms = snap.baseFlySpeed * speed;
+		float topKmh = topCms * 0.036f;
+		float topMph = topCms * 0.0223693629f;
+		snprintf(buffer, sizeof(buffer), "Top speed: %.1f km/h  (%.1f mph | %.0f cm/s)", topKmh, topMph, topCms);
 		imgui->TextDisabled(buffer);
 
 		imgui->Spacing();
