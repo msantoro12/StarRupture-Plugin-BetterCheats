@@ -46,17 +46,14 @@ namespace BetterCheats::Panels::Movement
 
 		// ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp
 		constexpr int kTableFlags  = (1 << 6) | (1 << 9) | (3 << 13);
-		constexpr int kColumnFixed = 1 << 4; // ImGuiTableColumnFlags_WidthFixed
 
 		// A value is applied only when it differs from the game default, so there is
 		// no separate enable toggle to keep in sync -- resetting a row IS disabling
 		// it. Mirrors player_weapons.cpp.
 		constexpr float kActiveEpsilon = 0.0001f;
 
-		// ---------------------------------------------------------------------
 		// Wanted state — written from the render thread and the keybind callback,
 		// read on the game thread.
-		// ---------------------------------------------------------------------
 		std::atomic<bool>  g_noClipWanted{ false };
 		std::atomic<float> g_flySpeedMultiplier{ kDefaultFlySpeedMultiplier };
 
@@ -66,14 +63,9 @@ namespace BetterCheats::Panels::Movement
 		// around a base without falling through it.
 		std::atomic<bool>  g_passThroughWalls{ true };
 
-		// ---------------------------------------------------------------------
-		// Applied state — game thread only.
-		//
-		// g_appliedTo is compared, never dereferenced blind: the pawn is replaced
-		// on respawn and the old one is destroyed, so state belonging to a
-		// character that is no longer the local pawn is dropped rather than
-		// restored.
-		// ---------------------------------------------------------------------
+		// Applied state — game thread only. g_appliedTo is compared, never
+		// dereferenced blind: the pawn is replaced on respawn, so state belonging to
+		// a character that is no longer the local pawn is dropped rather than restored.
 		bool                         g_active    = false;
 		SDK::ACrCharacterPlayerBase* g_appliedTo = nullptr;
 
@@ -210,10 +202,8 @@ namespace BetterCheats::Panels::Movement
 				character->AddMovementInput(SDK::FVector(0.0, 0.0, 1.0), vertical, true);
 		}
 
-		// ---------------------------------------------------------------------
-		// Snapshot — populated on the game thread (Tick), read on the ImGui
-		// render thread. Never touch SDK objects from RenderImGui().
-		// ---------------------------------------------------------------------
+		// Snapshot — populated on the game thread (Tick), read on the ImGui render
+		// thread. Never touch SDK objects from RenderImGui().
 		struct MovementSnapshot
 		{
 			bool  characterFound = false;
@@ -289,15 +279,11 @@ namespace BetterCheats::Panels::Movement
 			LOG_INFO("Movement: no-clip keybind is now %s.", combo);
 		}
 
-		// =======================================================================
-		// Attribute overrides — FGameplayAttributeData on three attribute sets
-		// that are DIRECT members of ACrCharacterPlayerBase (no ability-system
-		// traversal): MovementAttributes, MovementSpeedMultiplierAttributes and
-		// GemAttributes. Same enable-by-differing-from-default model, joined
-		// slider+box row and drawn reset button as player_weapons.cpp; there is
-		// no per-weapon-style profile here, just one flat set of player values.
-		// =======================================================================
-
+		// Attribute overrides — FGameplayAttributeData on three attribute sets that are
+		// direct members of ACrCharacterPlayerBase (no ability-system traversal):
+		// MovementAttributes, MovementSpeedMultiplierAttributes and GemAttributes. Same
+		// enable-by-differing-from-default model as player_weapons.cpp, just one flat
+		// set of player values instead of per-weapon profiles.
 		struct AttrDef
 		{
 			const char* label;
@@ -353,20 +339,21 @@ namespace BetterCheats::Panels::Movement
 			  "Travel speed multiplier while riding a zipline." },
 		};
 
-		float g_attrValues[kAttrCount];
-		bool  g_attrValuesInit = false;
+		// Written from RenderImGui (sliders, presets, reset) and read every tick from
+		// Tick (ApplyAttributeOverrides) on the game thread.
+		std::atomic<float> g_attrValues[kAttrCount];
+		std::atomic<bool>  g_attrValuesInit{ false };
 
 		void EnsureAttrDefaults()
 		{
-			if (g_attrValuesInit) return;
-			g_attrValuesInit = true;
+			if (g_attrValuesInit.exchange(true)) return;
 			for (int a = 0; a < kAttrCount; ++a)
-				g_attrValues[a] = kAttrs[a].defaultValue;
+				g_attrValues[a].store(kAttrs[a].defaultValue);
 		}
 
 		bool IsAttrActive(int attr)
 		{
-			return std::fabs(g_attrValues[attr] - kAttrs[attr].defaultValue) > kActiveEpsilon;
+			return std::fabs(g_attrValues[attr].load() - kAttrs[attr].defaultValue) > kActiveEpsilon;
 		}
 
 		std::string AttrConfigKey(const char* leaf)
@@ -415,7 +402,7 @@ namespace BetterCheats::Panels::Movement
 		// Same contract as SafeMultiplier, for the gameplay-attribute half.
 		float SafeAttrValue(int attr)
 		{
-			float v = g_attrValues[attr];
+			float v = g_attrValues[attr].load();
 			if (!(v == v))                 v = kAttrs[attr].defaultValue;   // NaN
 			if (v < kAttrs[attr].minValue) v = kAttrs[attr].minValue;
 			if (v > kAttrs[attr].maxValue) v = kAttrs[attr].maxValue;
@@ -444,30 +431,12 @@ namespace BetterCheats::Panels::Movement
 			catch (...) {}
 		}
 
-		// ---------------------------------------------------------------------
-		// Presets. Values only -- applying one never introduces a new enable
-		// state, it just writes into the same rows a player could set by hand.
-		// ---------------------------------------------------------------------
-		// =====================================================================
-		// Raw movement fields.
-		//
-		// Everything above is a gameplay-attribute multiplier with a known neutral
-		// default of 1.0. The fields below are plain engine/config floats living on the
-		// player's OWN movement component and character actor -- per-player instances,
-		// never a CDO, data asset or developer-settings singleton, so nothing here can
-		// reach another player, another weapon, or the world.
-		//
-		// Their shipped values cannot be known from the headers (SprintMoveSpeed might
-		// be 600, MaxDashDistance 900), so each one is captured ONCE as a baseline and
-		// the UI edits a MULTIPLIER of it. That buys a lot: one row widget, one config
-		// shape and one reset rule across the whole panel, and a saved multiplier stays
-		// meaningful even if a game update retunes the number underneath it.
-		//
-		// The baseline is persisted per save. Re-capturing it while an override was live
-		// would bake a cheated value in as "stock" and permanently destroy the reset
-		// path -- and after a plugin hot-reload the component cannot tell the two apart,
-		// which is exactly when it would happen.
-		// =====================================================================
+		// Raw movement fields: plain engine/config floats on the player's own movement
+		// component and character actor (per-player instances, never a CDO or shared
+		// singleton), as opposed to the gameplay-attribute multipliers above. Shipped
+		// values aren't known from the headers, so each is captured once as a baseline
+		// and the UI edits a multiplier of it; the baseline is persisted per save so a
+		// hot-reload can't re-read an already-cheated value and call it stock.
 		enum RawIndex : int
 		{
 			kRawNormalSpeed = 0, kRawSprintSpeed, kRawCrouchSpeed, kRawADSSpeed,
@@ -535,41 +504,31 @@ namespace BetterCheats::Panels::Movement
 			{ "Double Jump Energy","dblJumpEnergy", 0.00f,  3.0f, "Energy a double jump costs. 0 makes it free." },
 		};
 
-		struct RawGroup { const char* title; const char* tableId; int first; int count; };
-		const RawGroup kRawGroups[] = {
-			{ "Ground Speed", "##raw_ground", kRawNormalSpeed,   9 },
-			{ "Jump & Air",   "##raw_air",    kRawJumpZ,         6 },
-			{ "Dash",         "##raw_dash",   kRawDashDistance,  5 },
-			{ "Slide",        "##raw_slide",  kRawSlideMaxSpeed, 4 },
-			{ "Zipline",      "##raw_zip",    kRawZipSpeed,      2 },
-			{ "Energy",       "##raw_energy", kRawMaxEnergy,     6 },
-		};
-		constexpr int kRawGroupCount = static_cast<int>(sizeof(kRawGroups) / sizeof(kRawGroups[0]));
-
 		// Reset is queued rather than written from the UI: the panel renders on the
 		// render thread and every SDK write in this module happens from Tick.
-		bool  g_rawRestoreWanted[kRawCount] = {};
+		std::atomic<bool> g_rawRestoreWanted[kRawCount] = {};
 
-		float g_rawValues[kRawCount];      // the multiplier the player edits
-		float g_rawBaseline[kRawCount];    // the game's shipped value, captured once
-		bool  g_rawValuesInit    = false;
-		bool  g_rawBaselineReady = false;
+		// Written from RenderImGui (sliders, presets, reset), read every tick from
+		// Tick (ApplyRawOverrides) on the game thread.
+		std::atomic<float> g_rawValues[kRawCount];      // the multiplier the player edits
+		std::atomic<float> g_rawBaseline[kRawCount];    // the game's shipped value, captured once
+		std::atomic<bool>  g_rawValuesInit{ false };
+		std::atomic<bool>  g_rawBaselineReady{ false };
 
 		void EnsureRawDefaults()
 		{
-			if (g_rawValuesInit) return;
-			g_rawValuesInit = true;
+			if (g_rawValuesInit.exchange(true)) return;
 			for (int r = 0; r < kRawCount; ++r)
 			{
-				g_rawValues[r]   = 1.0f;
-				g_rawBaseline[r] = 0.0f;
+				g_rawValues[r].store(1.0f);
+				g_rawBaseline[r].store(0.0f);
 			}
 		}
 
 		bool IsRawActive(int raw)
 		{
-			return g_rawBaselineReady && g_rawValuesInit
-			    && std::fabs(g_rawValues[raw] - 1.0f) > kActiveEpsilon;
+			return g_rawBaselineReady.load() && g_rawValuesInit.load()
+			    && std::fabs(g_rawValues[raw].load() - 1.0f) > kActiveEpsilon;
 		}
 
 		std::string RawConfigKey(const char* leaf)
@@ -632,29 +591,29 @@ namespace BetterCheats::Panels::Movement
 		// wrong, because a bad baseline makes reset permanently wrong.
 		void CaptureRawBaseline(SDK::ACrCharacterPlayerBase* character)
 		{
-			if (g_rawBaselineReady) return;
+			if (g_rawBaselineReady.load()) return;
 
 			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
 			if (!move) return;
 
 			for (int i = 0; i < kCompBindCount; ++i)
-				g_rawBaseline[kCompBinds[i].raw] = move->*kCompBinds[i].member;
+				g_rawBaseline[kCompBinds[i].raw].store(move->*kCompBinds[i].member);
 
 			for (int i = 0; i < kCharBindCount; ++i)
-				g_rawBaseline[kCharBinds[i].raw] = character->*kCharBinds[i].member;
+				g_rawBaseline[kCharBinds[i].raw].store(character->*kCharBinds[i].member);
 
-			g_rawBaseline[kRawAirDashes] = static_cast<float>(move->MaxAirDashesToExecute);
+			g_rawBaseline[kRawAirDashes].store(static_cast<float>(move->MaxAirDashesToExecute));
 
 			if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-				g_rawBaseline[kRawMaxEnergy] = energy->MaxEnergy.BaseValue;
+				g_rawBaseline[kRawMaxEnergy].store(energy->MaxEnergy.BaseValue);
 
 			if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
-				g_rawBaseline[kRawRegenDelay] = logic->DelayBeforeEnergyRegeneration;
+				g_rawBaseline[kRawRegenDelay].store(logic->DelayBeforeEnergyRegeneration);
 
-			g_rawBaselineReady = true;
+			g_rawBaselineReady.store(true);
 
 			for (int r = 0; r < kRawCount; ++r)
-				SessionConfig::Set(RawBaselineKey(kRaws[r].key), g_rawBaseline[r]);
+				SessionConfig::Set(RawBaselineKey(kRaws[r].key), g_rawBaseline[r].load());
 			SessionConfig::Set("playerMovement.baselineCaptured", true);
 
 			LOG_INFO("Movement: captured stock baseline for %d raw fields.", kRawCount);
@@ -669,7 +628,7 @@ namespace BetterCheats::Panels::Movement
 		// cooldown, sprint drain) declare a minimum of 0 and keep it.
 		float SafeMultiplier(int raw)
 		{
-			float m = g_rawValues[raw];
+			float m = g_rawValues[raw].load();
 			if (!(m == m))                   m = 1.0f;   // NaN
 			if (m < kRaws[raw].minValue)     m = kRaws[raw].minValue;
 			if (m > kRaws[raw].maxValue)     m = kRaws[raw].maxValue;
@@ -681,7 +640,7 @@ namespace BetterCheats::Panels::Movement
 			// g_rawValuesInit matters as much as the baseline: a zero-initialised
 			// multiplier table reads as "every row active" and multiplies the player's
 			// speed by 0.0, which looks exactly like the game freezing.
-			if (!g_rawBaselineReady || !g_rawValuesInit) return;
+			if (!g_rawBaselineReady.load() || !g_rawValuesInit.load()) return;
 
 			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
 			if (!move) return;
@@ -690,30 +649,30 @@ namespace BetterCheats::Panels::Movement
 			{
 				const int r = kCompBinds[i].raw;
 				if (IsRawActive(r))
-					move->*kCompBinds[i].member = g_rawBaseline[r] * SafeMultiplier(r);
+					move->*kCompBinds[i].member = g_rawBaseline[r].load() * SafeMultiplier(r);
 			}
 
 			for (int i = 0; i < kCharBindCount; ++i)
 			{
 				const int r = kCharBinds[i].raw;
 				if (IsRawActive(r))
-					character->*kCharBinds[i].member = g_rawBaseline[r] * SafeMultiplier(r);
+					character->*kCharBinds[i].member = g_rawBaseline[r].load() * SafeMultiplier(r);
 			}
 
 			if (IsRawActive(kRawAirDashes))
 			{
-				const float want = g_rawBaseline[kRawAirDashes] * SafeMultiplier(kRawAirDashes);
+				const float want = g_rawBaseline[kRawAirDashes].load() * SafeMultiplier(kRawAirDashes);
 				move->MaxAirDashesToExecute = static_cast<int>(want + 0.5f);
 			}
 
 			if (IsRawActive(kRawMaxEnergy))
 				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-					WriteAttribute(energy->MaxEnergy, g_rawBaseline[kRawMaxEnergy] * SafeMultiplier(kRawMaxEnergy));
+					WriteAttribute(energy->MaxEnergy, g_rawBaseline[kRawMaxEnergy].load() * SafeMultiplier(kRawMaxEnergy));
 
 			if (IsRawActive(kRawRegenDelay))
 				if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
 					logic->DelayBeforeEnergyRegeneration =
-						g_rawBaseline[kRawRegenDelay] * SafeMultiplier(kRawRegenDelay);
+						g_rawBaseline[kRawRegenDelay].load() * SafeMultiplier(kRawRegenDelay);
 		}
 
 		// Reset writes the captured baseline back once, because leaving the multiplier
@@ -721,28 +680,30 @@ namespace BetterCheats::Panels::Movement
 		// we wrote into it.
 		void RestoreRawField(SDK::ACrCharacterPlayerBase* character, int raw)
 		{
-			if (!character || !g_rawBaselineReady) return;
+			if (!character || !g_rawBaselineReady.load()) return;
 
 			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
 			if (!move) return;
 
+			const float baseline = g_rawBaseline[raw].load();
+
 			for (int i = 0; i < kCompBindCount; ++i)
-				if (kCompBinds[i].raw == raw) { move->*kCompBinds[i].member = g_rawBaseline[raw]; return; }
+				if (kCompBinds[i].raw == raw) { move->*kCompBinds[i].member = baseline; return; }
 
 			for (int i = 0; i < kCharBindCount; ++i)
-				if (kCharBinds[i].raw == raw) { character->*kCharBinds[i].member = g_rawBaseline[raw]; return; }
+				if (kCharBinds[i].raw == raw) { character->*kCharBinds[i].member = baseline; return; }
 
 			if (raw == kRawAirDashes)
-				move->MaxAirDashesToExecute = static_cast<int>(g_rawBaseline[raw] + 0.5f);
+				move->MaxAirDashesToExecute = static_cast<int>(baseline + 0.5f);
 			else if (raw == kRawMaxEnergy)
 			{
 				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-					WriteAttribute(energy->MaxEnergy, g_rawBaseline[raw]);
+					WriteAttribute(energy->MaxEnergy, baseline);
 			}
 			else if (raw == kRawRegenDelay)
 			{
 				if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
-					logic->DelayBeforeEnergyRegeneration = g_rawBaseline[raw];
+					logic->DelayBeforeEnergyRegeneration = baseline;
 			}
 		}
 
@@ -802,14 +763,14 @@ namespace BetterCheats::Panels::Movement
 		{
 			for (int a = 0; a < kAttrCount; ++a)
 			{
-				g_attrValues[a] = kAttrs[a].defaultValue;
+				g_attrValues[a].store(kAttrs[a].defaultValue);
 				SessionConfig::Set(AttrConfigKey(kAttrs[a].key), kAttrs[a].defaultValue);
 			}
 			for (int r = 0; r < kRawCount; ++r)
 			{
-				g_rawValues[r] = 1.0f;
+				g_rawValues[r].store(1.0f);
 				SessionConfig::Set(RawConfigKey(kRaws[r].key), 1.0f);
-				g_rawRestoreWanted[r] = true;   // put the stock value back, not just stop writing
+				g_rawRestoreWanted[r].store(true);   // put the stock value back, not just stop writing
 			}
 		}
 
@@ -824,7 +785,7 @@ namespace BetterCheats::Panels::Movement
 				float v = value;
 				if (v < kRaws[g].minValue) v = kRaws[g].minValue;
 				if (v > kRaws[g].maxValue) v = kRaws[g].maxValue;
-				g_rawValues[g] = v;
+				g_rawValues[g].store(v);
 				SessionConfig::Set(RawConfigKey(kRaws[g].key), v);
 			}
 		}
@@ -834,13 +795,13 @@ namespace BetterCheats::Panels::Movement
 			for (const PresetVal& v : preset.vals)
 			{
 				if (v.attr < 0) break;
-				g_attrValues[v.attr] = v.value;
+				g_attrValues[v.attr].store(v.value);
 				SessionConfig::Set(AttrConfigKey(kAttrs[v.attr].key), v.value);
 			}
 			for (const PresetRaw& r : preset.raws)
 			{
 				if (r.raw < 0) break;
-				g_rawValues[r.raw] = r.value;
+				g_rawValues[r.raw].store(r.value);
 				SessionConfig::Set(RawConfigKey(kRaws[r.raw].key), r.value);
 			}
 			LOG_INFO("Movement: applied preset '%s'.", preset.label);
@@ -887,7 +848,9 @@ namespace BetterCheats::Panels::Movement
 		void RenderAttrRow(IModLoaderImGui* imgui, int attr, int depth = 0, bool* openFlag = nullptr)
 		{
 			const AttrDef& def   = kAttrs[attr];
-			float&         value = g_attrValues[attr];
+			// ImGui writes through a plain float*, so the atomic is read into a local
+			// and only stored back when the widget actually reports a change.
+			float          value = g_attrValues[attr].load();
 			const bool     active = IsAttrActive(attr);
 
 			imgui->PushIDInt(attr);
@@ -927,6 +890,7 @@ namespace BetterCheats::Panels::Movement
 			{
 				if (value < def.minValue) value = def.minValue;
 				if (value > def.maxValue) value = def.maxValue;
+				g_attrValues[attr].store(value);
 				SessionConfig::Set(AttrConfigKey(def.key), value);
 
 				if (attr == kAttrMoveSpeed)
@@ -937,6 +901,7 @@ namespace BetterCheats::Panels::Movement
 			if (BetterCheats::UI::ResetButton(imgui, "##reset"))
 			{
 				value = def.defaultValue;
+				g_attrValues[attr].store(value);
 				SessionConfig::Set(AttrConfigKey(def.key), value);
 
 				if (attr == kAttrMoveSpeed)
@@ -948,31 +913,22 @@ namespace BetterCheats::Panels::Movement
 			imgui->PopID();
 		}
 
-		void RenderAttrGroup(IModLoaderImGui* imgui, const char* tableId, int first, int count)
-		{
-			if (!imgui->BeginTable(tableId, 3, kTableFlags))
-				return;
-
-			imgui->TableSetupColumn("Attribute", 0, 0.36f);
-			imgui->TableSetupColumn("Value",     0, 0.54f);
-			imgui->TableSetupColumn("",          0, 0.10f);
-
-			for (int a = first; a < first + count; ++a)
-				RenderAttrRow(imgui, a);
-
-			imgui->EndTable();
-		}
-
 		void RenderRawRow(IModLoaderImGui* imgui, int raw, int depth = 1, bool* openFlag = nullptr)
 		{
 			const RawDef& def   = kRaws[raw];
-			float&        value = g_rawValues[raw];
+			// ImGui writes through a plain float*, so the atomic is read into a local
+			// and only stored back when the widget actually reports a change.
+			float         value = g_rawValues[raw].load();
 			const bool    active = IsRawActive(raw);
+			const bool    baselineReady = g_rawBaselineReady.load();
 
 			char tip[512];
-			if (g_rawBaselineReady)
+			if (baselineReady)
+			{
+				const float baseline = g_rawBaseline[raw].load();
 				snprintf(tip, sizeof(tip), "%s\n\nStock value: %.3f\nApplied: %.3f",
-					def.tooltip, g_rawBaseline[raw], g_rawBaseline[raw] * value);
+					def.tooltip, baseline, baseline * value);
+			}
 			else
 				snprintf(tip, sizeof(tip), "%s\n\n(Stock value not read yet - load a save to enable.)",
 					def.tooltip);
@@ -984,7 +940,7 @@ namespace BetterCheats::Panels::Movement
 			DrawRowLabel(imgui, def.label, tip, active, depth, openFlag);
 
 			imgui->TableSetColumnIndex(1);
-			imgui->BeginDisabled(!g_rawBaselineReady);
+			imgui->BeginDisabled(!baselineReady);
 
 			float availX = 0.0f, availY = 0.0f;
 			imgui->GetContentRegionAvail(&availX, &availY);
@@ -1012,6 +968,7 @@ namespace BetterCheats::Panels::Movement
 			{
 				if (value < def.minValue) value = def.minValue;
 				if (value > def.maxValue) value = def.maxValue;
+				g_rawValues[raw].store(value);
 				SessionConfig::Set(RawConfigKey(def.key), value);
 			}
 			imgui->EndDisabled();
@@ -1020,8 +977,9 @@ namespace BetterCheats::Panels::Movement
 			if (BetterCheats::UI::ResetButton(imgui, "##reset"))
 			{
 				value = 1.0f;
+				g_rawValues[raw].store(value);
 				SessionConfig::Set(RawConfigKey(def.key), value);
-				g_rawRestoreWanted[raw] = true;
+				g_rawRestoreWanted[raw].store(true);
 			}
 			if (imgui->IsItemHovered())
 				imgui->SetTooltip("Put the game's stock value back (turns this row off).");
@@ -1029,14 +987,10 @@ namespace BetterCheats::Panels::Movement
 			imgui->PopID();
 		}
 
-		// ---------------------------------------------------------------------
-		// Tuning rows.
-		//
-		// The original three groups are kept. Where a headline control has finer
-		// detail behind it, that control carries a disclosure arrow and its advanced
-		// rows sit indented underneath -- so Move Speed is one row until you ask it
-		// for the individual gaits, friction and acceleration.
-		// ---------------------------------------------------------------------
+		// Tuning rows. Where a headline control has finer detail behind it, that
+		// control carries a disclosure arrow and its advanced rows sit indented
+		// underneath -- so Move Speed is one row until you ask it for the individual
+		// gaits, friction and acceleration.
 		enum RowKind : int { RowAttr = 0, RowRaw = 1 };
 
 		enum OpenId : int
@@ -1122,7 +1076,7 @@ namespace BetterCheats::Panels::Movement
 
 		void RenderTuneGroups(IModLoaderImGui* imgui)
 		{
-			if (!g_rawBaselineReady)
+			if (!g_rawBaselineReady.load())
 				imgui->TextDisabled("Advanced rows stay greyed until the game's stock values are read - load a save.");
 
 			for (int g = 0; g < kTuneGroupCount; ++g)
@@ -1253,10 +1207,10 @@ namespace BetterCheats::Panels::Movement
 			CaptureRawBaseline(character);
 
 			for (int r = 0; r < kRawCount; ++r)
-				if (g_rawRestoreWanted[r])
+				if (g_rawRestoreWanted[r].load())
 				{
 					RestoreRawField(character, r);
-					g_rawRestoreWanted[r] = false;
+					g_rawRestoreWanted[r].store(false);
 				}
 
 			ApplyRawOverrides(character);
@@ -1288,7 +1242,7 @@ namespace BetterCheats::Panels::Movement
 			float value = SessionConfig::Get(AttrConfigKey(kAttrs[a].key), kAttrs[a].defaultValue);
 			if (value < kAttrs[a].minValue) value = kAttrs[a].minValue;
 			if (value > kAttrs[a].maxValue) value = kAttrs[a].maxValue;
-			g_attrValues[a] = value;
+			g_attrValues[a].store(value);
 		}
 
 		// Raw multipliers, plus the stock baseline they multiply. Restoring a persisted
@@ -1301,11 +1255,11 @@ namespace BetterCheats::Panels::Movement
 			float value = SessionConfig::Get(RawConfigKey(kRaws[r].key), 1.0f);
 			if (value < kRaws[r].minValue) value = kRaws[r].minValue;
 			if (value > kRaws[r].maxValue) value = kRaws[r].maxValue;
-			g_rawValues[r] = value;
+			g_rawValues[r].store(value);
 
-			g_rawBaseline[r] = SessionConfig::Get(RawBaselineKey(kRaws[r].key), 0.0f);
+			g_rawBaseline[r].store(SessionConfig::Get(RawBaselineKey(kRaws[r].key), 0.0f));
 		}
-		g_rawBaselineReady = haveBaseline;
+		g_rawBaselineReady.store(haveBaseline);
 
 		LOG_INFO("Movement: applied saved config for session '%s' (baseline %s).",
 			SessionConfig::GetSessionName().c_str(), haveBaseline ? "restored" : "not yet captured");
