@@ -42,6 +42,14 @@ static void OnToggleMenuPressed(EModKey /*key*/, EModKeyEvent /*event*/)
 	BetterCheats::CheatMenu::Toggle();
 }
 
+// Escape closes the menu like any other overlay's dismiss key. Registered by
+// enum, not RegisterKeybindByName: it's a universal convention, not a user
+// rebind, so it must not show up as a setting on the loader's config page.
+static void OnEscapePressed(EModKey /*key*/, EModKeyEvent /*event*/)
+{
+	BetterCheats::CheatMenu::RequestClose();
+}
+
 // Fires once a save is fully loaded into the world — reload this session's
 // JSON config and re-apply any persisted cheat settings.
 static void OnExperienceLoadComplete()
@@ -182,6 +190,7 @@ extern "C" {
 		// Register the toggle keybind — modloader tracks rebinds automatically
 		const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 		self->hooks->Input->RegisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
+		self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, &OnEscapePressed);
 
 		self->hooks->Engine->RegisterOnTick(&OnEngineTick);
 		self->hooks->World->RegisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
@@ -215,6 +224,7 @@ extern "C" {
 		{
 			const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 			g_self->hooks->Input->UnregisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
+			g_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, &OnEscapePressed);
 			g_self->hooks->Engine->UnregisterOnTick(&OnEngineTick);
 			g_self->hooks->World->UnregisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
 		}

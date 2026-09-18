@@ -40,10 +40,11 @@ namespace
 
 namespace BetterCheats
 {
-	IPluginSelf* CheatMenu::s_self           = nullptr;
-	PanelHandle  CheatMenu::s_panelHandle    = nullptr;
-	bool         CheatMenu::s_open           = false;
-	MenuCategory CheatMenu::s_activeCategory = MenuCategory::World_Environment;
+	IPluginSelf*      CheatMenu::s_self           = nullptr;
+	PanelHandle       CheatMenu::s_panelHandle    = nullptr;
+	bool              CheatMenu::s_open           = false;
+	MenuCategory      CheatMenu::s_activeCategory = MenuCategory::World_Environment;
+	std::atomic<bool> CheatMenu::s_closeRequested { false };
 	void* g_inputCaptureToken				 = nullptr;
 
 	// -------------------------------------------------------------------------
@@ -99,6 +100,9 @@ namespace BetterCheats
 		s_open = !s_open;
 		if (s_open)
 		{
+			// Drop any close request left over from before the menu opened, so it
+			// can't be consumed on the very first frame it's visible.
+			s_closeRequested.store(false);
 			s_self->hooks->UI->SetPanelOpen(s_panelHandle);
 			g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
 		}
@@ -108,6 +112,14 @@ namespace BetterCheats
 			s_self->hooks->UI->SetPanelClose(s_panelHandle);
 			s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
 		}
+	}
+
+	void CheatMenu::RequestClose()
+	{
+		// Runs on whatever thread fires the Escape keybind — no ImGui/SDK calls
+		// here, just flag the request for OnRender to act on next frame.
+		if (s_open)
+			s_closeRequested.store(true);
 	}
 
 	// -------------------------------------------------------------------------
@@ -131,6 +143,18 @@ namespace BetterCheats
 
 	void CheatMenu::OnRender(IModLoaderImGui* imgui)
 	{
+		constexpr int kFocusRootAndChildWindows = 3; // ImGuiFocusedFlags_RootAndChildWindows
+
+		// Deferred by a frame (see RequestClose): closing here, not in the keybind
+		// callback, means capture release can't land inside the same Escape press
+		// that requested it. Focus-gated so with multiple loader panels open,
+		// Escape only closes the one being looked at.
+		if (s_closeRequested.exchange(false) && imgui->IsWindowFocused(kFocusRootAndChildWindows))
+		{
+			Toggle();
+			return;
+		}
+
 		float avail_x, avail_y;
 		imgui->GetContentRegionAvail(&avail_x, &avail_y);
 

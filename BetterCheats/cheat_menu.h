@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "plugin_interface.h"
 #include "plugin_helpers.h"
 
@@ -50,6 +52,10 @@ namespace BetterCheats
 		static void Toggle();
 		static bool IsOpen() { return s_open; }
 
+		// Escape keybind callback flags a close; OnRender consumes it next frame
+		// so capture is never released inside the same keypress that set it.
+		static void RequestClose();
+
 	private:
 		static void OnPanelClosed(PanelHandle handle);
 		static void OnRender(IModLoaderImGui* imgui);
@@ -58,9 +64,10 @@ namespace BetterCheats
 		static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, float avail_y, const char* message);
 		static void NavItem(IModLoaderImGui* imgui, const char* label, MenuCategory cat);
 
-		static IPluginSelf*  s_self;
-		static PanelHandle   s_panelHandle;
-		static bool          s_open;
-		static MenuCategory  s_activeCategory;
+		static IPluginSelf*      s_self;
+		static PanelHandle       s_panelHandle;
+		static bool              s_open;
+		static MenuCategory      s_activeCategory;
+		static std::atomic<bool> s_closeRequested;
 	};
 }
