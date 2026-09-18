@@ -73,26 +73,10 @@ namespace BetterCheats::AOB
 			"ACrTechnologyKeeper::CheckAvailableBuildings", CheckAvailableBuildings);
 		ResolveOptional(self, scanner, g_resolved.IsRecipeUnlocked,
 			"ACrCraftingRecipeOwner::IsRecipeUnlocked", IsRecipeUnlocked);
-		// DISABLED for ++Earth20+Neon-HF2-CL-125897.
-		//
-		// Both of these stopped matching when HF2 recompiled the game, and ModLoader
-		// v1.20.0 changed what that costs: ANY unresolved hook now refuses the whole
-		// plugin, where an optional miss used to just disable its own feature. So two
-		// stale building-stability patterns were taking every other cheat down with
-		// them.
-		//
-		// Not resolving them leaves both addresses at 0, which is a state
-		// player_building.cpp already handles -- it null-checks, logs, and skips
-		// installing the hook. The only thing lost is the stability bypass; placements
-		// are stability-checked as the game intends.
-		//
-		// Re-enable by finding signatures that match the current build. Leave these
-		// commented rather than deleted so the originals are here to diff against.
-		//
-		// ResolveOptional(self, scanner, g_resolved.CheckStability_Custom,
-		//     "ACrAPHelperActorCustom::CheckStability", CheckStability_Custom);
-		// ResolveOptional(self, scanner, g_resolved.CheckStability_DynamicPillar,
-		//     "ACrAPHelperDynamicPillar::CheckStability", CheckStability_DynamicPillar);
+		ResolveOptional(self, scanner, g_resolved.CheckStability_Custom,
+			"ACrAPHelperActorCustom::CheckStability", CheckStability_Custom);
+		ResolveOptional(self, scanner, g_resolved.CheckStability_DynamicPillar,
+			"ACrAPHelperDynamicPillar::CheckStability", CheckStability_DynamicPillar);
 
 		ResolveOptional(self, scanner, g_resolved.GetMiningDamage,
 			"UCrMiningToolComponent::GetMiningDamage", GetMiningDamage);
