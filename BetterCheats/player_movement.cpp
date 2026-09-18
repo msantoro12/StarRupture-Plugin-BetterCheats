@@ -1120,6 +1120,11 @@ namespace BetterCheats::Panels::Movement
 
 	void Initialize()
 	{
+		// Seed before the panel or the tick is registered. Left to the lazy callers, Tick
+		// and RenderImGui can race the once-check and one of them reads zeroed values.
+		EnsureAttrDefaults();
+		EnsureRawDefaults();
+
 		IPluginSelf* self = GetSelf();
 		if (!self || !self->hooks || !self->hooks->Input)
 			return;
