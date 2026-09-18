@@ -36,12 +36,6 @@ static PluginInfo s_pluginInfo = {
 	PLUGIN_TARGET_CLIENT
 };
 
-// Loader config-changed callback — lets settings edited in the loader's own UI
-// take effect immediately instead of at the next restart.
-static void OnPluginConfigChanged(const char* /*section*/, const char* /*key*/, const char* /*newValue*/)
-{
-}
-
 // Keybind callback — fires on key press to toggle the menu
 static void OnToggleMenuPressed(EModKey /*key*/, EModKeyEvent /*event*/)
 {
@@ -189,8 +183,6 @@ extern "C" {
 		const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 		self->hooks->Input->RegisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
 
-		self->hooks->UI->RegisterOnConfigChanged(self, &OnPluginConfigChanged);
-
 		self->hooks->Engine->RegisterOnTick(&OnEngineTick);
 		self->hooks->World->RegisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
 
@@ -223,7 +215,6 @@ extern "C" {
 		{
 			const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 			g_self->hooks->Input->UnregisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
-			g_self->hooks->UI->UnregisterOnConfigChanged(g_self, &OnPluginConfigChanged);
 			g_self->hooks->Engine->UnregisterOnTick(&OnEngineTick);
 			g_self->hooks->World->UnregisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
 		}
