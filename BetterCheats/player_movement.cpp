@@ -460,15 +460,28 @@ namespace BetterCheats::Panels::Movement
 		// compose fix works without the owner having to find the setting.
 		std::atomic<bool> g_showLiveValues{ true };
 
+		// One-shot proof-of-life logging (gss.13): confirms in ModLoader.log that
+		// both the Tick-side fill and the RenderImGui-side draw actually ran this
+		// session.
+		std::atomic<bool> g_loggedTickFill{ false };
+		std::atomic<bool> g_loggedRender{ false };
+
 		// Per-row "expected = game" / "expected != game" readout, indexed like
 		// kAttrs/g_composedAttrs. `game` is CurrentValue read fresh at the start of
 		// this tick, before we touch it; `expected` is what we intend it to be (the
 		// composed result while active, or `game` itself while inactive). Compared
-		// pre-write so a lasting mismatch actually means something. Refreshed from
-		// Tick, read from RenderImGui. The raw-field equivalents (g_dbgRawGame/
-		// g_dbgRawExpected, including the Max Energy row) live below kRaws.
+		// pre-write so a lasting mismatch actually means something. `base` is
+		// BaseValue (never written by us); `buffed` is the game's own aggregate with
+		// LEMs/buffs folded in but before our composition -- ComposedAttribute::
+		// GetGame() while active, `game` itself while inactive. `buffed` != `base`
+		// is what the "+buff" tag reports. Refreshed from Tick, read from
+		// RenderImGui. The raw-field equivalents (g_dbgRawGame/g_dbgRawExpected/
+		// g_dbgRawBase/g_dbgRawBuffed, including the Max Energy row -- the one raw
+		// row that's actually GAS-backed) live below kRaws.
 		std::atomic<float> g_dbgAttrGame[kAttrCount];
 		std::atomic<float> g_dbgAttrExpected[kAttrCount];
+		std::atomic<float> g_dbgAttrBase[kAttrCount];
+		std::atomic<float> g_dbgAttrBuffed[kAttrCount];
 
 		// Movement-component block readout. -1 = not available yet.
 		std::atomic<float> g_dbgMaxWalkSpeed  { -1.0f };
@@ -496,8 +509,15 @@ namespace BetterCheats::Panels::Movement
 				g_composedAttrs[attrIndex].Release(set, attr);
 
 			const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+			// "Buffed" (base + LEMs/buffs, ours excluded): GetGame() reflects what
+			// Apply() just composed from -- valid once active. Inactive rows never
+			// had that captured, but CurrentValue is already untouched by us, so it
+			// already IS base + buffs.
+			const float buffed = active ? g_composedAttrs[attrIndex].GetGame() : gameBefore;
 			g_dbgAttrGame[attrIndex].store(gameBefore);
 			g_dbgAttrExpected[attrIndex].store(expected);
+			g_dbgAttrBase[attrIndex].store(attr.BaseValue);
+			g_dbgAttrBuffed[attrIndex].store(buffed);
 		}
 
 		void ApplyAttributeOverrides(SDK::ACrCharacterPlayerBase* character)
@@ -515,6 +535,9 @@ namespace BetterCheats::Panels::Movement
 				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
 					for (const GemBinding& b : kGemBindings)
 						ApplyAttrRow(set, set->*b.member, b.attr);
+
+				if (!g_loggedTickFill.exchange(true))
+					LOG_INFO("Movement: live values first filled by Tick.");
 			}
 			catch (...) {}
 		}
@@ -607,8 +630,14 @@ namespace BetterCheats::Panels::Movement
 		// g_dbgAttrGame/g_dbgAttrExpected above (see that comment). kRawMaxEnergy's
 		// slot is filled from g_composedMaxEnergy instead of baseline*multiplier,
 		// since that row composes rather than writing a captured baseline.
+		// g_dbgRawBase/g_dbgRawBuffed are meaningful only for kRawMaxEnergy -- the
+		// one raw row backed by a real GAS attribute with its own BaseValue; every
+		// other raw row is a plain engine field with no base/buff split, so those
+		// slots are left unused and never rendered.
 		std::atomic<float> g_dbgRawGame[kRawCount];
 		std::atomic<float> g_dbgRawExpected[kRawCount];
+		std::atomic<float> g_dbgRawBase[kRawCount];
+		std::atomic<float> g_dbgRawBuffed[kRawCount];
 
 		void EnsureRawDefaults()
 		{
@@ -806,8 +835,11 @@ namespace BetterCheats::Panels::Movement
 					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
 
 				const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+				const float buffed   = active ? g_composedMaxEnergy.GetGame() : gameBefore;
 				g_dbgRawGame[kRawMaxEnergy].store(gameBefore);
 				g_dbgRawExpected[kRawMaxEnergy].store(expected);
+				g_dbgRawBase[kRawMaxEnergy].store(energy->MaxEnergy.BaseValue);
+				g_dbgRawBuffed[kRawMaxEnergy].store(buffed);
 
 				// Live-values block: stamina current/max, read here since EnergyAttributes
 				// is already resolved.
@@ -971,9 +1003,12 @@ namespace BetterCheats::Panels::Movement
 		// `labelReserve` is where the "Show live values" readout starts (SameLine
 		// offset from the row start), shared across every row in the tab so it
 		// lines up regardless of that row's own label/indent/arrow width.
+		// hasBase=false (the plain engine-field raw rows) skips the "+buff" tag --
+		// those have no BaseValue to compare against.
 		void DrawRowLabel(IModLoaderImGui* imgui, const char* label, const char* tooltip,
 		                  bool active, int depth, bool* openFlag,
-		                  bool showLive, float expected, float game, float labelReserve)
+		                  bool showLive, float expected, float game, float labelReserve,
+		                  bool hasBase, float base, float buffed, const char* changeDesc)
 		{
 			const float frameH = imgui->GetFrameHeight();
 
@@ -1000,6 +1035,13 @@ namespace BetterCheats::Panels::Movement
 			{
 				imgui->SameLine(labelReserve, 0.0f);
 				BetterCheats::UI::RenderLiveValue(imgui, expected, game);
+
+				if (hasBase)
+				{
+					imgui->SameLine(0.0f, 8.0f);
+					BetterCheats::UI::RenderBuffTag(imgui, "buff", "With LEMs/buffs",
+						base, buffed, changeDesc, expected, game);
+				}
 			}
 
 			if (!openFlag)
@@ -1020,9 +1062,13 @@ namespace BetterCheats::Panels::Movement
 			imgui->PushIDInt(attr);
 			imgui->TableNextRow(0, 0.0f);
 
+			char changeDesc[24];
+			BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc), kAttrModes[attr], value);
+
 			imgui->TableSetColumnIndex(0);
 			DrawRowLabel(imgui, def.label, def.tooltip, active, depth, openFlag,
-				g_showLiveValues.load(), g_dbgAttrExpected[attr].load(), g_dbgAttrGame[attr].load(), labelReserve);
+				g_showLiveValues.load(), g_dbgAttrExpected[attr].load(), g_dbgAttrGame[attr].load(), labelReserve,
+				true, g_dbgAttrBase[attr].load(), g_dbgAttrBuffed[attr].load(), changeDesc);
 
 			imgui->TableSetColumnIndex(1);
 
@@ -1107,9 +1153,16 @@ namespace BetterCheats::Panels::Movement
 			imgui->PushIDInt(1000 + raw);
 			imgui->TableNextRow(0, 0.0f);
 
+			// Every raw row is a Multiply of the captured baseline except Max Energy,
+			// whose own tag/tooltip is GAS-composed the same way as the kAttrs rows.
+			char changeDesc[24];
+			BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc),
+				BetterCheats::ComposedAttribute::Mode::Multiply, value);
+
 			imgui->TableSetColumnIndex(0);
 			DrawRowLabel(imgui, def.label, tip, active, depth, openFlag,
-				g_showLiveValues.load(), g_dbgRawExpected[raw].load(), g_dbgRawGame[raw].load(), labelReserve);
+				g_showLiveValues.load(), g_dbgRawExpected[raw].load(), g_dbgRawGame[raw].load(), labelReserve,
+				raw == kRawMaxEnergy, g_dbgRawBase[raw].load(), g_dbgRawBuffed[raw].load(), changeDesc);
 
 			imgui->TableSetColumnIndex(1);
 			imgui->BeginDisabled(!baselineReady);
@@ -1492,6 +1545,9 @@ namespace BetterCheats::Panels::Movement
 
 	void RenderImGui(IModLoaderImGui* imgui)
 	{
+		if (!g_loggedRender.exchange(true))
+			LOG_INFO("Movement: live values readout rendering.");
+
 		EnsureAttrDefaults();
 		EnsureRawDefaults();
 
@@ -1501,8 +1557,8 @@ namespace BetterCheats::Panels::Movement
 			snap = g_snapshot;
 		}
 
-		imgui->TextDisabled("Multipliers apply on top of your base stats and any LEMs or game buffs.");
-
+		// First control in the tab, unconditional -- not gated behind
+		// snap.characterFound below, so it's visible even before a save loads.
 		bool showLiveValues = g_showLiveValues.load();
 		if (imgui->Checkbox("Show live values", &showLiveValues))
 		{
@@ -1512,6 +1568,8 @@ namespace BetterCheats::Panels::Movement
 		if (imgui->IsItemHovered())
 			imgui->SetTooltip("Shows the game's own numbers next to each slider, so a change is\n"
 			                  "obvious instead of a guess.");
+
+		imgui->TextDisabled("Multipliers apply on top of your base stats and any LEMs or game buffs.");
 
 		imgui->SeparatorText("Fly / No-Clip Movement");
 

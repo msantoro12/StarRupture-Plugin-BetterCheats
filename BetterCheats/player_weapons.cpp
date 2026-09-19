@@ -175,6 +175,12 @@ namespace BetterCheats::Panels::Weapons
 		// compose fix works without the owner having to find the setting.
 		std::atomic<bool> g_showLiveValues{ true };
 
+		// One-shot proof-of-life logging (gss.13): confirms in ModLoader.log that
+		// both the Tick-side fill and the RenderImGui-side draw actually ran this
+		// session, instead of guessing from a report of "nothing happens".
+		std::atomic<bool> g_loggedTickFill{ false };
+		std::atomic<bool> g_loggedRender{ false };
+
 		// Au-layer resolved stats on the equipped weapon (UAuWeaponAttributeSet,
 		// inherited by UCrWeaponAttributeSet), refreshed from Tick. -1 = not
 		// available yet, matching g_dbgMag above.
@@ -193,10 +199,15 @@ namespace BetterCheats::Panels::Weapons
 		// kAttrs/g_composed. `game` is CurrentValue read fresh at the start of this
 		// tick, before we touch it; `expected` is what we intend it to be (the
 		// composed result while active, or `game` itself while inactive). Compared
-		// pre-write so a lasting mismatch actually means something. Refreshed from
-		// Tick, read from RenderImGui.
+		// pre-write so a lasting mismatch actually means something. `base` is
+		// BaseValue (never written by us); `buffed` is the game's own aggregate
+		// with attachments folded in but before our composition -- ComposedAttribute
+		// ::GetGame() while active, `game` itself while inactive. `buffed` != `base`
+		// is what the "+mods" tag reports. Refreshed from Tick, read from RenderImGui.
 		std::atomic<float> g_dbgAttrGame[kAttrCount];
 		std::atomic<float> g_dbgAttrExpected[kAttrCount];
+		std::atomic<float> g_dbgAttrBase[kAttrCount];
+		std::atomic<float> g_dbgAttrBuffed[kAttrCount];
 
 		// Reserve ammo is an inventory item, not an attribute, so an empty inventory
 		// blocks reload whatever is written to attributes. Tops up only on an observed
@@ -563,15 +574,27 @@ namespace BetterCheats::Panels::Weapons
 
 		// Copy the active profile out under the lock instead of keeping a reference
 		// into g_profiles across the SDK calls below -- a newly discovered weapon can
-		// push_back and reallocate the vector from another Tick call.
+		// push_back and reallocate the vector from another Tick call. ROOT CAUSE of
+		// the gss.12 "dead readout" bug: this used to `return` here whenever no
+		// weapon profile was active (holding a tool, nothing equipped), which
+		// skipped the live-values readout below entirely -- unlike Movement, whose
+		// equivalent update has no such gate and always runs. Fall back to an
+		// all-default profile instead: IsActive() reads false for every row, so
+		// the compose loop below Releases everything (correct -- nothing should be
+		// overridden with no weapon out) while still updating every debug atomic.
 		Profile profile;
+		bool haveActiveProfile = false;
 		{
 			std::lock_guard<std::mutex> lock(g_profilesMutex);
 			const int active = g_activeProfile.load();
-			if (active < 0 || active >= static_cast<int>(g_profiles.size()))
-				return;
-			profile = g_profiles[active];
+			if (active >= 0 && active < static_cast<int>(g_profiles.size()))
+			{
+				profile = g_profiles[active];
+				haveActiveProfile = true;
+			}
 		}
+		if (!haveActiveProfile)
+			ResetProfileValues(profile);   // oneHitKill/infiniteMagazine already default false
 
 		try
 		{
@@ -615,9 +638,19 @@ namespace BetterCheats::Panels::Weapons
 					// On the very first activation frame there is no previous write to
 					// compare against yet -- expected is trivially "game" until next tick.
 					const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+					// "Buffed" (base + attachments, ours excluded): GetGame() reflects
+					// what Apply() just composed from -- valid once active. Inactive rows
+					// never had that captured, but CurrentValue is already untouched by
+					// us, so it already IS base + attachments.
+					const float buffed = active ? g_composed[a].GetGame() : gameBefore;
 					g_dbgAttrGame[a].store(gameBefore);
 					g_dbgAttrExpected[a].store(expected);
+					g_dbgAttrBase[a].store(attr.BaseValue);
+					g_dbgAttrBuffed[a].store(buffed);
 				}
+
+				if (!g_loggedTickFill.exchange(true))
+					LOG_INFO("Weapons: live values first filled by Tick (weapon '%s').", profile.display.c_str());
 
 				// Live-values readout: the Au-layer resolved stats (WeaponDamage etc.)
 				// are inherited members on the same UCrWeaponAttributeSet, and the raw
@@ -744,13 +777,11 @@ namespace BetterCheats::Panels::Weapons
 
 	void RenderImGui(IModLoaderImGui* imgui)
 	{
-		{
-			std::lock_guard<std::mutex> lock(g_profilesMutex);
-			EnsureBuiltInProfiles();
-		}
+		if (!g_loggedRender.exchange(true))
+			LOG_INFO("Weapons: live values readout rendering (%d rows).", kAttrCount);
 
-		imgui->TextDisabled("Multipliers apply on top of the weapon's base stats and any attachments.");
-
+		// First control in the tab, unconditional -- gss.12 buried this below a
+		// disclaimer line where it was easy to miss entirely.
 		bool showLiveValues = g_showLiveValues.load();
 		if (imgui->Checkbox("Show live values", &showLiveValues))
 		{
@@ -760,6 +791,13 @@ namespace BetterCheats::Panels::Weapons
 		if (imgui->IsItemHovered())
 			imgui->SetTooltip("Shows the game's own numbers next to each slider, so a change is\n"
 			                  "obvious instead of a guess.");
+
+		imgui->TextDisabled("Multipliers apply on top of the weapon's base stats and any attachments.");
+
+		{
+			std::lock_guard<std::mutex> lock(g_profilesMutex);
+			EnsureBuiltInProfiles();
+		}
 
 		imgui->SeparatorText("Ammo");
 
@@ -1026,8 +1064,18 @@ namespace BetterCheats::Panels::Weapons
 
 					if (g_showLiveValues.load())
 					{
+						const float expected = g_dbgAttrExpected[a].load();
+						const float game     = g_dbgAttrGame[a].load();
 						imgui->SameLine(labelReserve, 0.0f);
-						BetterCheats::UI::RenderLiveValue(imgui, g_dbgAttrExpected[a].load(), g_dbgAttrGame[a].load());
+						BetterCheats::UI::RenderLiveValue(imgui, expected, game);
+
+						char changeDesc[24];
+						BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc),
+							ownedByOneHitKill ? BetterCheats::ComposedAttribute::Mode::Absolute : kAttrModes[a],
+							ownedByOneHitKill ? kOneHitKillDamage : value);
+						imgui->SameLine(0.0f, 8.0f);
+						BetterCheats::UI::RenderBuffTag(imgui, "mods", "With attachments",
+							g_dbgAttrBase[a].load(), g_dbgAttrBuffed[a].load(), changeDesc, expected, game);
 					}
 
 					// Slider for feel, typed box on the right for precision. Zero spacing

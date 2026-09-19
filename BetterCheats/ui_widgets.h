@@ -1,6 +1,7 @@
 #pragma once
 
 #include "plugin_interface.h"
+#include "attribute_compose.h"
 
 #include <algorithm>
 #include <cmath>
@@ -91,5 +92,55 @@ namespace BetterCheats::UI
 
 		if (match) imgui->TextColored(0.310f, 0.639f, 0.878f, 1.0f, line);   // #4FA3E0
 		else       imgui->TextColored(0.878f, 0.282f, 0.282f, 1.0f, line);   // #E04848
+	}
+
+	// "Our change" as the row's own compose formula would describe it -- not the
+	// row's slider format string, since this always needs to read as a delta on
+	// top of `buffed`, e.g. "x1.50" even on a row whose slider box shows "1.50x".
+	inline void FormatChangeDesc(char* out, size_t outSize, ComposedAttribute::Mode mode, float amount)
+	{
+		switch (mode)
+		{
+		case ComposedAttribute::Mode::Multiply: snprintf(out, outSize, "x%.2f",  amount); break;
+		case ComposedAttribute::Mode::Add:      snprintf(out, outSize, "%+.0f", amount); break;
+		case ComposedAttribute::Mode::Absolute: snprintf(out, outSize, "= %.0f", amount); break;
+		}
+	}
+
+	// Call right after RenderLiveValue, on the same line (caller does the
+	// SameLine -- this never starts one itself, so a no-op call here leaves the
+	// cursor exactly where a real tag would have). No-op when `buffed` (the
+	// game's aggregate, LEMs/attachments included) matches `base` (BaseValue,
+	// which we never write) -- nothing external is contributing right now.
+	// Otherwise draws "+<tagWord> <base>-><buffed>" in accent orange and attaches
+	// a hover tooltip spelling out the whole chain: base, buffed (`withPhrase`,
+	// e.g. "With LEMs/buffs" or "With attachments"), our own change, the result
+	// that composes to, and what's actually live in the game right now.
+	// ASCII "->" rather than U+2192: same font-range limitation as RenderLiveValue's "!=".
+	inline void RenderBuffTag(IModLoaderImGui* imgui, const char* tagWord, const char* withPhrase,
+	                           float base, float buffed, const char* changeDesc,
+	                           float expected, float game)
+	{
+		if (LiveValuesMatch(base, buffed))
+			return;
+
+		char baseStr[32], buffedStr[32], expectedStr[32], gameStr[32], tag[80];
+		FormatLiveValue(baseStr, sizeof(baseStr), base);
+		FormatLiveValue(buffedStr, sizeof(buffedStr), buffed);
+		FormatLiveValue(expectedStr, sizeof(expectedStr), expected);
+		FormatLiveValue(gameStr, sizeof(gameStr), game);
+		snprintf(tag, sizeof(tag), "+%s %s->%s", tagWord, baseStr, buffedStr);
+
+		imgui->BeginGroup();
+		imgui->TextColored(0.910f, 0.639f, 0.239f, 1.0f, tag);   // accent orange, ~#E8A33D
+		imgui->EndGroup();
+
+		if (imgui->IsItemHovered())
+		{
+			char tip[256];
+			snprintf(tip, sizeof(tip), "Base %s\n%s %s\nOur change %s\nResult %s\nLive in game %s",
+				baseStr, withPhrase, buffedStr, changeDesc, expectedStr, gameStr);
+			imgui->SetTooltip(tip);
+		}
 	}
 }
