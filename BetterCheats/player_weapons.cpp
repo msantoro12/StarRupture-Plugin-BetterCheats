@@ -4,6 +4,8 @@
 #include "aob_resolver.h"
 #include "ui_widgets.h"
 #include "attribute_compose.h"
+#include "cheat_math.h"
+#include "player_lookup.h"
 
 #include "Chimera_classes.hpp"
 
@@ -29,7 +31,7 @@ namespace BetterCheats::Panels::Weapons
 
 		// A value is applied only when it differs from the game default, so there is no
 		// separate enable toggle to keep in sync -- resetting a row IS disabling it.
-		constexpr float kActiveEpsilon = 0.0001f;
+		// See cheat_math.h for kActiveEpsilon/DiffersFromDefault, shared with Movement.
 
 		// FGameplayAttributeData on UCrWeaponAttributeSet, reached via
 		// ACrCharacterPlayerBase::WeaponAttributes. The set belongs to the character and
@@ -379,7 +381,7 @@ namespace BetterCheats::Panels::Weapons
 
 		bool IsActive(int attr, float value)
 		{
-			return std::fabs(value - kAttrs[attr].defaultValue) > kActiveEpsilon;
+			return BetterCheats::DiffersFromDefault(value, kAttrs[attr].defaultValue);
 		}
 
 		std::string ToLower(const std::string& in)
@@ -516,24 +518,6 @@ namespace BetterCheats::Panels::Weapons
 			return static_cast<int>(g_profiles.size()) - 1;
 		}
 
-
-		// See player_attributes.cpp's GetLocalCharacter -- the pawn isn't a Chimera
-		// character until it's actually possessed, and UWorld::GetWorld() can throw.
-		SDK::ACrCharacterPlayerBase* GetLocalCharacter()
-		{
-			SDK::UWorld* world = nullptr;
-			try { world = SDK::UWorld::GetWorld(); }
-			catch (...) { return nullptr; }
-			if (!world) return nullptr;
-
-			SDK::APlayerController* pc = SDK::UGameplayStatics::GetPlayerController(world, 0);
-			if (!pc || !pc->Pawn) return nullptr;
-
-			SDK::UClass* characterClass = SDK::ACrCharacterPlayerBase::StaticClass();
-			if (!characterClass || !pc->Pawn->IsA(characterClass)) return nullptr;
-
-			return static_cast<SDK::ACrCharacterPlayerBase*>(pc->Pawn);
-		}
 	}
 
 	void Tick(float deltaSeconds)
@@ -791,6 +775,8 @@ namespace BetterCheats::Panels::Weapons
 		if (imgui->IsItemHovered())
 			imgui->SetTooltip("Shows the game's own numbers next to each slider, so a change is\n"
 			                  "obvious instead of a guess.");
+		imgui->SameLine(0.0f, 12.0f);
+		imgui->TextDisabled("Shows the weapon in your hand. Equip one to see its stats.");
 
 		imgui->TextDisabled("Multipliers apply on top of the weapon's base stats and any attachments.");
 
@@ -910,14 +896,8 @@ namespace BetterCheats::Panels::Weapons
 
 		// Widest attribute label decides where the live-values readout starts, so
 		// every row's readout lines up regardless of that row's own label length.
-		float labelReserve = 0.0f;
-		for (int a = 0; a < kAttrCount; ++a)
-		{
-			float w = 0.0f, h = 0.0f;
-			imgui->CalcTextSize(kAttrs[a].label, &w, &h, false, -1.0f);
-			if (w > labelReserve) labelReserve = w;
-		}
-		labelReserve += imgui->GetFrameHeight();
+		const float labelReserve = BetterCheats::UI::PrescanLabelWidth(imgui, kAttrCount,
+			[](int a) { return kAttrs[a].label; });
 
 		bool profilesEmpty = false;
 		{
@@ -1041,7 +1021,13 @@ namespace BetterCheats::Panels::Weapons
 			// ---- attributes ----------------------------------------------------
 			if (imgui->BeginTable("##weapon_attr_table", 3, kWeaponsTableFlags))
 			{
-				imgui->TableSetupColumn("Attribute", 0, 0.36f);
+				// Fixed, not stretched: must fit the label AND the live-values
+				// readout next to it (see GetReadoutColumnWidth) or the readout
+				// clips against the slider column. The other two stay stretched --
+				// the slider is capped anyway (GetSliderWidthCap), so they have
+				// slack to give up.
+				imgui->TableSetupColumn("Attribute", BetterCheats::UI::kColumnWidthFixed,
+					BetterCheats::UI::GetReadoutColumnWidth(imgui, labelReserve));
 				imgui->TableSetupColumn("Value",     0, 0.54f);
 				imgui->TableSetupColumn("",          0, 0.10f);
 
@@ -1051,83 +1037,42 @@ namespace BetterCheats::Panels::Weapons
 					float&         value = profile.values[a];
 
 					const bool ownedByOneHitKill = (a == kAttrDamage && profile.oneHitKill);
-					const bool active            = IsActive(a, value) && !ownedByOneHitKill;
 
 					imgui->PushIDInt(a);
 					imgui->TableNextRow(0, 0.0f);
 
-					imgui->TableSetColumnIndex(0);
-					if (active) imgui->Text(def.label);
-					else        imgui->TextDisabled(def.label);
-					if (def.tooltip && imgui->IsItemHovered())
-						imgui->SetTooltip(def.tooltip);
-
-					if (g_showLiveValues.load())
-					{
-						const float expected = g_dbgAttrExpected[a].load();
-						const float game     = g_dbgAttrGame[a].load();
-						imgui->SameLine(labelReserve, 0.0f);
-						BetterCheats::UI::RenderLiveValue(imgui, expected, game);
-
-						char changeDesc[24];
+					const bool showLive = g_showLiveValues.load();
+					char changeDesc[24];
+					if (showLive)
 						BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc),
 							ownedByOneHitKill ? BetterCheats::ComposedAttribute::Mode::Absolute : kAttrModes[a],
 							ownedByOneHitKill ? kOneHitKillDamage : value);
-						imgui->SameLine(0.0f, 8.0f);
-						BetterCheats::UI::RenderBuffTag(imgui, "mods", "With attachments",
-							g_dbgAttrBase[a].load(), g_dbgAttrBuffed[a].load(), changeDesc, expected, game);
-					}
 
-					// Slider for feel, typed box on the right for precision. Zero spacing
-					// between them so they read as one joined control.
-					imgui->TableSetColumnIndex(1);
-					imgui->BeginDisabled(ownedByOneHitKill);
+					BetterCheats::UI::RowSpec spec;
+					spec.label         = def.label;
+					spec.tooltip       = def.tooltip;
+					spec.value         = &value;
+					spec.minValue      = def.minValue;
+					spec.maxValue      = def.maxValue;
+					spec.step          = def.step;
+					spec.format        = def.format;
+					spec.resetValue    = def.defaultValue;
+					spec.active        = IsActive(a, value) && !ownedByOneHitKill;
+					spec.disableSlider = ownedByOneHitKill;
+					spec.showLive      = showLive;
+					spec.expected      = g_dbgAttrExpected[a].load();
+					spec.game          = g_dbgAttrGame[a].load();
+					spec.composing     = IsActive(a, value) || ownedByOneHitKill;
+					spec.hasBase       = true;
+					spec.base          = g_dbgAttrBase[a].load();
+					spec.unmodified    = g_dbgAttrBuffed[a].load();
+					spec.changeDesc    = changeDesc;
+					spec.tagWord       = "mods";
+					spec.baseLabel     = "Base (no attachments)";
+					spec.labelReserve  = labelReserve;
 
-					float availX = 0.0f, availY = 0.0f;
-					imgui->GetContentRegionAvail(&availX, &availY);
-
-					// InputFloat draws [text][-][+]. Measure the widest value this row can
-					// actually show rather than guessing a pixel count -- the loader's
-					// FontScale is user-configurable (this user runs 1.50), so anything
-					// hardcoded clips at some scale.
-					char widest[32];
-					snprintf(widest, sizeof(widest), def.format,
-						(def.maxValue >= 100.0f) ? -888.0f : -88.88f);
-					float textW = 0.0f, textH = 0.0f;
-					imgui->CalcTextSize(widest, &textW, &textH, false, -1.0f);
-
-					const float frameH  = imgui->GetFrameHeight();
-					const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f); // text + 2 steppers + padding
-					const float sliderW = (availX > numBoxW + frameH * 2.0f)
-						? (availX - numBoxW)
-						: (availX * 0.55f);
-
-					bool changed = false;
-					imgui->SetNextItemWidth(sliderW);
-					if (imgui->SliderFloat("##slider", &value, def.minValue, def.maxValue, def.format))
-						changed = true;
-
-					imgui->SameLine(0.0f, 0.0f);
-					imgui->SetNextItemWidth(-1.0f);
-					if (imgui->InputFloat("##num", &value, def.step, def.step * 10.0f, def.format))
-						changed = true;
-
-					if (changed)
-					{
-						if (value < def.minValue) value = def.minValue;
-						if (value > def.maxValue) value = def.maxValue;
+					if (BetterCheats::UI::BuildRow(imgui, spec).changed)
 						SessionConfig::Set(ConfigKey(profile, def.key, "value"), value);
-					}
-					imgui->EndDisabled();
-
-					imgui->TableSetColumnIndex(2);
-					if (BetterCheats::UI::ResetButton(imgui, "##reset"))
-					{
-						value = def.defaultValue;
-						SessionConfig::Set(ConfigKey(profile, def.key, "value"), value);
-					}
-					if (imgui->IsItemHovered())
-						imgui->SetTooltip("Reset to the game default (turns this row off).");
 
 					imgui->PopID();
 				}

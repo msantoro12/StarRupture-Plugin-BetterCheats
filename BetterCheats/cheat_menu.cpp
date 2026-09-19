@@ -8,6 +8,7 @@
 #include "panel_misc.h"
 #include "panel_dev.h"
 #include "keybind_picker.h"
+#include "ui_widgets.h"
 
 // ---------------------------------------------------------------------------
 // ImGui style constant aliases — mirror imgui.h, must match modloader's ImGui
@@ -26,7 +27,6 @@ namespace
 	constexpr int Var_ItemSpacing   = 14; // vec2
 
 	// Layout
-	constexpr float kNavWidth     = 160.0f;
 	constexpr float kSepWidth     =   1.0f;
 	constexpr float kContentPadX  =  14.0f;
 	constexpr float kContentPadY  =  10.0f;
@@ -36,6 +36,24 @@ namespace
 	constexpr float kNavBgR = 0.10f, kNavBgG = 0.10f, kNavBgB = 0.13f; // sidebar bg
 	constexpr float kSepR = 0.22f,  kSepG = 0.22f,   kSepB = 0.28f;   // separator
 	constexpr float kGrpR = 0.48f,  kGrpG = 0.52f,   kGrpB = 0.62f;   // group header
+
+	// Every nav item and group header, so the sidebar's width (computed in
+	// OnRender, see PrescanLabelWidth) fits the widest one of either kind --
+	// group headers ("MACHINERY") can be as wide as an item label. A fixed
+	// 160px clipped "Logistic Drones"/"MACHINERY" once FontScale went much
+	// past 1.0.
+	const char* kSidebarLabels[] = {
+		"WORLD", "  Environment", "  Corporations",
+		"PLAYER", "  Self", "  Item Spawner", "  Inventory", "  Weapon",
+		"  Movement", "  Teleport", "  Building", "  Skills", "  Tools",
+		"ENEMIES", "  Enemies",
+		"MACHINERY", "  Crafters", "  Power", "  Logistic Drones", "  Rail Drones",
+		"MISC", "  Misc",
+#if BETTERCHEATS_DEV_BUILD
+		"DEV", "  Cheat Manager",
+#endif
+	};
+	constexpr int kSidebarLabelCount = static_cast<int>(sizeof(kSidebarLabels) / sizeof(kSidebarLabels[0]));
 }
 
 namespace BetterCheats
@@ -173,11 +191,14 @@ namespace BetterCheats
 		}
 
 		// Sidebar
+		const float navWidth = BetterCheats::UI::PrescanLabelWidth(imgui, kSidebarLabelCount,
+			[](int i) { return kSidebarLabels[i]; });
+
 		imgui->PushStyleColor(Col_ChildBg, kNavBgR, kNavBgG, kNavBgB, 1.0f);
 		imgui->PushStyleVarVec2(Var_WindowPadding, 0.0f, 6.0f);
 		imgui->PushStyleVarVec2(Var_ItemSpacing,   0.0f, 1.0f);
-		if (imgui->BeginChild("##nav", kNavWidth, avail_y, false))
-			RenderSidebar(imgui);
+		if (imgui->BeginChild("##nav", navWidth, avail_y, false))
+			RenderSidebar(imgui, navWidth);
 		imgui->EndChild();
 		imgui->PopStyleVar(2);
 		imgui->PopStyleColor(1);
@@ -202,7 +223,7 @@ namespace BetterCheats
 	// Sidebar
 	// -------------------------------------------------------------------------
 
-	void CheatMenu::NavItem(IModLoaderImGui* imgui, const char* label, MenuCategory cat)
+	void CheatMenu::NavItem(IModLoaderImGui* imgui, const char* label, MenuCategory cat, float navWidth)
 	{
 		const bool active = (s_activeCategory == cat);
 
@@ -214,7 +235,7 @@ namespace BetterCheats
 		}
 
 		imgui->PushIDStr(label);
-		if (imgui->SelectableFull(label, active, 0, kNavWidth, 0.0f))
+		if (imgui->SelectableFull(label, active, 0, navWidth, 0.0f))
 		{
 			// A rebind picker left waiting on the panel we are navigating away
 			// from would never get the chance to finish.
@@ -229,7 +250,7 @@ namespace BetterCheats
 			imgui->PopStyleColor(3);
 	}
 
-	void CheatMenu::RenderSidebar(IModLoaderImGui* imgui)
+	void CheatMenu::RenderSidebar(IModLoaderImGui* imgui, float navWidth)
 	{
 		auto NavGroup = [&](const char* label)
 		{
@@ -244,35 +265,35 @@ namespace BetterCheats
 		};
 
 		NavGroup("WORLD");
-		NavItem(imgui, "  Environment",         MenuCategory::World_Environment);
-		NavItem(imgui, "  Corporations",        MenuCategory::World_Corporations);
+		NavItem(imgui, "  Environment",         MenuCategory::World_Environment,      navWidth);
+		NavItem(imgui, "  Corporations",        MenuCategory::World_Corporations,     navWidth);
 
 		NavGroup("PLAYER");
-		NavItem(imgui, "  Self",                MenuCategory::Player_Self);
-		NavItem(imgui, "  Item Spawner",        MenuCategory::Player_ItemSpawner);
-		NavItem(imgui, "  Inventory",           MenuCategory::Player_Inventory);
-		NavItem(imgui, "  Weapon",              MenuCategory::Player_Weapon);
-		NavItem(imgui, "  Movement",            MenuCategory::Player_Movement);
-		NavItem(imgui, "  Teleport",            MenuCategory::Player_Teleport);
-		NavItem(imgui, "  Building",            MenuCategory::Player_Building);
-		NavItem(imgui, "  Skills",              MenuCategory::Player_Skills);
-		NavItem(imgui, "  Tools",               MenuCategory::Player_Tools);
+		NavItem(imgui, "  Self",                MenuCategory::Player_Self,            navWidth);
+		NavItem(imgui, "  Item Spawner",        MenuCategory::Player_ItemSpawner,     navWidth);
+		NavItem(imgui, "  Inventory",           MenuCategory::Player_Inventory,       navWidth);
+		NavItem(imgui, "  Weapon",              MenuCategory::Player_Weapon,          navWidth);
+		NavItem(imgui, "  Movement",            MenuCategory::Player_Movement,        navWidth);
+		NavItem(imgui, "  Teleport",            MenuCategory::Player_Teleport,        navWidth);
+		NavItem(imgui, "  Building",            MenuCategory::Player_Building,        navWidth);
+		NavItem(imgui, "  Skills",              MenuCategory::Player_Skills,          navWidth);
+		NavItem(imgui, "  Tools",               MenuCategory::Player_Tools,           navWidth);
 
 		NavGroup("ENEMIES");
-		NavItem(imgui, "  Enemies",             MenuCategory::Enemies_Enemies);
+		NavItem(imgui, "  Enemies",             MenuCategory::Enemies_Enemies,        navWidth);
 
 		NavGroup("MACHINERY");
-		NavItem(imgui, "  Crafters",            MenuCategory::Machinery_Crafters);
-		NavItem(imgui, "  Power",               MenuCategory::Machinery_Power);
-		NavItem(imgui, "  Logistic Drones",     MenuCategory::Machinery_LogisticDrones);
-		NavItem(imgui, "  Rail Drones",         MenuCategory::Machinery_RailDrones);
+		NavItem(imgui, "  Crafters",            MenuCategory::Machinery_Crafters,     navWidth);
+		NavItem(imgui, "  Power",               MenuCategory::Machinery_Power,        navWidth);
+		NavItem(imgui, "  Logistic Drones",     MenuCategory::Machinery_LogisticDrones, navWidth);
+		NavItem(imgui, "  Rail Drones",         MenuCategory::Machinery_RailDrones,   navWidth);
 
 		NavGroup("MISC");
-		NavItem(imgui, "  Misc",                MenuCategory::Misc);
+		NavItem(imgui, "  Misc",                MenuCategory::Misc,                   navWidth);
 
 #if BETTERCHEATS_DEV_BUILD
 		NavGroup("DEV");
-		NavItem(imgui, "  Cheat Manager",       MenuCategory::Dev_CheatManager);
+		NavItem(imgui, "  Cheat Manager",       MenuCategory::Dev_CheatManager,       navWidth);
 #endif
 	}
 

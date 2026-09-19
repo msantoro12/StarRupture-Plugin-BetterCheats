@@ -7,6 +7,8 @@
 #include "session_config.h"
 #include "ui_widgets.h"
 #include "attribute_compose.h"
+#include "cheat_math.h"
+#include "player_lookup.h"
 
 #include "Chimera_classes.hpp"
 
@@ -50,8 +52,8 @@ namespace BetterCheats::Panels::Movement
 
 		// A value is applied only when it differs from the game default, so there is
 		// no separate enable toggle to keep in sync -- resetting a row IS disabling
-		// it. Mirrors player_weapons.cpp.
-		constexpr float kActiveEpsilon = 0.0001f;
+		// it. See cheat_math.h for kActiveEpsilon/DiffersFromDefault, shared with
+		// player_weapons.cpp.
 
 		// MaxEnergy.CurrentValue is an absolute stamina-pool size, not a multiplier,
 		// so its composed result gets a generous sanity clamp instead of reusing
@@ -81,24 +83,6 @@ namespace BetterCheats::Panels::Movement
 		float                  g_savedMaxFlySpeed    = kFallbackMaxFlySpeed;
 		float                  g_savedFlyingBraking  = 0.0f;
 		bool                   g_savedCheatFlying    = false;
-
-		SDK::ACrCharacterPlayerBase* GetLocalCharacter()
-		{
-			SDK::UWorld* world = nullptr;
-			try { world = SDK::UWorld::GetWorld(); }
-			catch (...) { return nullptr; }
-			if (!world) return nullptr;
-
-			SDK::APlayerController* pc = SDK::UGameplayStatics::GetPlayerController(world, 0);
-			if (!pc || !pc->Pawn) return nullptr;
-
-			// See player_attributes.cpp's GetLocalCharacter — the pawn isn't a
-			// Chimera character until it's actually possessed.
-			SDK::UClass* characterClass = SDK::ACrCharacterPlayerBase::StaticClass();
-			if (!characterClass || !pc->Pawn->IsA(characterClass)) return nullptr;
-
-			return static_cast<SDK::ACrCharacterPlayerBase*>(pc->Pawn);
-		}
 
 		// Key state is polled rather than bound: the modloader exposes press and
 		// release events, not "is held", and holding Space is exactly what
@@ -383,7 +367,7 @@ namespace BetterCheats::Panels::Movement
 
 		bool IsAttrActive(int attr)
 		{
-			return std::fabs(g_attrValues[attr].load() - kAttrs[attr].defaultValue) > kActiveEpsilon;
+			return BetterCheats::DiffersFromDefault(g_attrValues[attr].load(), kAttrs[attr].defaultValue);
 		}
 
 		std::string AttrConfigKey(const char* leaf)
@@ -426,11 +410,8 @@ namespace BetterCheats::Panels::Movement
 		// Same contract as SafeMultiplier, for the gameplay-attribute half.
 		float SafeAttrValue(int attr)
 		{
-			float v = g_attrValues[attr].load();
-			if (!(v == v))                 v = kAttrs[attr].defaultValue;   // NaN
-			if (v < kAttrs[attr].minValue) v = kAttrs[attr].minValue;
-			if (v > kAttrs[attr].maxValue) v = kAttrs[attr].maxValue;
-			return v;
+			return BetterCheats::SafeValue(g_attrValues[attr].load(), kAttrs[attr].defaultValue,
+				kAttrs[attr].minValue, kAttrs[attr].maxValue);
 		}
 
 		// One slot per row in kAttrs, shared across whichever of the three attribute
@@ -652,7 +633,7 @@ namespace BetterCheats::Panels::Movement
 		bool IsRawActive(int raw)
 		{
 			return g_rawBaselineReady.load() && g_rawValuesInit.load()
-			    && std::fabs(g_rawValues[raw].load() - 1.0f) > kActiveEpsilon;
+			    && BetterCheats::DiffersFromDefault(g_rawValues[raw].load(), 1.0f);
 		}
 
 		std::string RawConfigKey(const char* leaf)
@@ -752,11 +733,7 @@ namespace BetterCheats::Panels::Movement
 		// cooldown, sprint drain) declare a minimum of 0 and keep it.
 		float SafeMultiplier(int raw)
 		{
-			float m = g_rawValues[raw].load();
-			if (!(m == m))                   m = 1.0f;   // NaN
-			if (m < kRaws[raw].minValue)     m = kRaws[raw].minValue;
-			if (m > kRaws[raw].maxValue)     m = kRaws[raw].maxValue;
-			return m;
+			return BetterCheats::SafeValue(g_rawValues[raw].load(), 1.0f, kRaws[raw].minValue, kRaws[raw].maxValue);
 		}
 
 		void ApplyRawOverrides(SDK::ACrCharacterPlayerBase* character)
@@ -993,63 +970,9 @@ namespace BetterCheats::Panels::Movement
 			LOG_INFO("Movement: applied preset '%s'.", preset.label);
 		}
 
-		// One row: label (dimmed at default) + joined slider/box + drawn reset
-		// button. Copied from player_weapons.cpp, including the number-box width
-		// computed from CalcTextSize rather than a fixed pixel constant -- fixed
-		// widths clip under this user's FontScale 1.50.
-		// Draws the label cell. A row with advanced detail underneath gets a disclosure
-		// arrow; rows without one are padded by the same width so every label in the
-		// group still lines up. Children are indented one step.
-		// `labelReserve` is where the "Show live values" readout starts (SameLine
-		// offset from the row start), shared across every row in the tab so it
-		// lines up regardless of that row's own label/indent/arrow width.
-		// hasBase=false (the plain engine-field raw rows) skips the "+buff" tag --
-		// those have no BaseValue to compare against.
-		void DrawRowLabel(IModLoaderImGui* imgui, const char* label, const char* tooltip,
-		                  bool active, int depth, bool* openFlag,
-		                  bool showLive, float expected, float game, float labelReserve,
-		                  bool hasBase, float base, float buffed, const char* changeDesc)
-		{
-			const float frameH = imgui->GetFrameHeight();
-
-			if (depth > 0)
-				imgui->Indent(frameH * static_cast<float>(depth));
-
-			if (openFlag)
-			{
-				if (imgui->ArrowButton("##expand", *openFlag ? 3 : 1))   // 3 = Down, 1 = Right
-					*openFlag = !*openFlag;
-				imgui->SameLine(0.0f, -1.0f);
-			}
-			else
-			{
-				imgui->Indent(frameH);   // keep labels aligned with the arrowed rows
-			}
-
-			if (active) imgui->Text(label);
-			else        imgui->TextDisabled(label);
-			if (tooltip && imgui->IsItemHovered())
-				imgui->SetTooltip(tooltip);
-
-			if (showLive)
-			{
-				imgui->SameLine(labelReserve, 0.0f);
-				BetterCheats::UI::RenderLiveValue(imgui, expected, game);
-
-				if (hasBase)
-				{
-					imgui->SameLine(0.0f, 8.0f);
-					BetterCheats::UI::RenderBuffTag(imgui, "buff", "With LEMs/buffs",
-						base, buffed, changeDesc, expected, game);
-				}
-			}
-
-			if (!openFlag)
-				imgui->Unindent(frameH);
-
-			if (depth > 0)
-				imgui->Unindent(frameH * static_cast<float>(depth));
-		}
+		// One row: label (dimmed at default, + optional disclosure arrow/indent) +
+		// live-values readout + joined slider/box + drawn reset button -- see
+		// ui_widgets.h's BuildRow, which does the actual drawing.
 
 		void RenderAttrRow(IModLoaderImGui* imgui, int attr, float labelReserve, int depth = 0, bool* openFlag = nullptr)
 		{
@@ -1065,61 +988,39 @@ namespace BetterCheats::Panels::Movement
 			char changeDesc[24];
 			BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc), kAttrModes[attr], value);
 
-			imgui->TableSetColumnIndex(0);
-			DrawRowLabel(imgui, def.label, def.tooltip, active, depth, openFlag,
-				g_showLiveValues.load(), g_dbgAttrExpected[attr].load(), g_dbgAttrGame[attr].load(), labelReserve,
-				true, g_dbgAttrBase[attr].load(), g_dbgAttrBuffed[attr].load(), changeDesc);
+			BetterCheats::UI::RowSpec spec;
+			spec.label        = def.label;
+			spec.tooltip      = def.tooltip;
+			spec.value        = &value;
+			spec.minValue     = def.minValue;
+			spec.maxValue     = def.maxValue;
+			spec.step         = def.step;
+			spec.format       = def.format;
+			spec.resetValue   = def.defaultValue;
+			spec.active       = active;
+			spec.depth        = depth;
+			spec.openFlag     = openFlag;
+			spec.padForArrow  = true;
+			spec.showLive     = g_showLiveValues.load();
+			spec.expected     = g_dbgAttrExpected[attr].load();
+			spec.game         = g_dbgAttrGame[attr].load();
+			spec.composing    = active;
+			spec.hasBase      = true;
+			spec.base         = g_dbgAttrBase[attr].load();
+			spec.unmodified   = g_dbgAttrBuffed[attr].load();
+			spec.changeDesc   = changeDesc;
+			spec.tagWord      = "buff";
+			spec.baseLabel    = "Base (no LEMs/buffs)";
+			spec.labelReserve = labelReserve;
 
-			imgui->TableSetColumnIndex(1);
-
-			float availX = 0.0f, availY = 0.0f;
-			imgui->GetContentRegionAvail(&availX, &availY);
-
-			char widest[32];
-			snprintf(widest, sizeof(widest), def.format,
-				(def.maxValue >= 100.0f) ? -888.0f : -88.88f);
-			float textW = 0.0f, textH = 0.0f;
-			imgui->CalcTextSize(widest, &textW, &textH, false, -1.0f);
-
-			const float frameH  = imgui->GetFrameHeight();
-			const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f); // text + 2 steppers + padding
-			const float sliderW = (availX > numBoxW + frameH * 2.0f)
-				? (availX - numBoxW)
-				: (availX * 0.55f);
-
-			bool changed = false;
-			imgui->SetNextItemWidth(sliderW);
-			if (imgui->SliderFloat("##slider", &value, def.minValue, def.maxValue, def.format))
-				changed = true;
-
-			imgui->SameLine(0.0f, 0.0f);
-			imgui->SetNextItemWidth(-1.0f);
-			if (imgui->InputFloat("##num", &value, def.step, def.step * 10.0f, def.format))
-				changed = true;
-
-			if (changed)
+			if (BetterCheats::UI::BuildRow(imgui, spec).changed)
 			{
-				if (value < def.minValue) value = def.minValue;
-				if (value > def.maxValue) value = def.maxValue;
 				g_attrValues[attr].store(value);
 				SessionConfig::Set(AttrConfigKey(def.key), value);
 
 				if (attr == kAttrMoveSpeed)
 					CascadeMoveSpeed(value);
 			}
-
-			imgui->TableSetColumnIndex(2);
-			if (BetterCheats::UI::ResetButton(imgui, "##reset"))
-			{
-				value = def.defaultValue;
-				g_attrValues[attr].store(value);
-				SessionConfig::Set(AttrConfigKey(def.key), value);
-
-				if (attr == kAttrMoveSpeed)
-					CascadeMoveSpeed(value);
-			}
-			if (imgui->IsItemHovered())
-				imgui->SetTooltip("Reset to the game default (turns this row off).");
 
 			imgui->PopID();
 		}
@@ -1133,23 +1034,6 @@ namespace BetterCheats::Panels::Movement
 			const bool    active = IsRawActive(raw);
 			const bool    baselineReady = g_rawBaselineReady.load();
 
-			char tip[512];
-			if (raw == kRawMaxEnergy)
-			{
-				// Composed onto the live game value (see g_composedMaxEnergy), not a
-				// captured baseline, so there is no fixed "stock value" to show here.
-				snprintf(tip, sizeof(tip), "%s", def.tooltip);
-			}
-			else if (baselineReady)
-			{
-				const float baseline = g_rawBaseline[raw].load();
-				snprintf(tip, sizeof(tip), "%s\n\nStock value: %.3f\nApplied: %.3f",
-					def.tooltip, baseline, baseline * value);
-			}
-			else
-				snprintf(tip, sizeof(tip), "%s\n\n(Stock value not read yet - load a save to enable.)",
-					def.tooltip);
-
 			imgui->PushIDInt(1000 + raw);
 			imgui->TableNextRow(0, 0.0f);
 
@@ -1159,55 +1043,44 @@ namespace BetterCheats::Panels::Movement
 			BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc),
 				BetterCheats::ComposedAttribute::Mode::Multiply, value);
 
-			imgui->TableSetColumnIndex(0);
-			DrawRowLabel(imgui, def.label, tip, active, depth, openFlag,
-				g_showLiveValues.load(), g_dbgRawExpected[raw].load(), g_dbgRawGame[raw].load(), labelReserve,
-				raw == kRawMaxEnergy, g_dbgRawBase[raw].load(), g_dbgRawBuffed[raw].load(), changeDesc);
+			BetterCheats::UI::RowSpec spec;
+			spec.label        = def.label;
+			spec.tooltip      = def.tooltip;
+			spec.value        = &value;
+			spec.minValue     = def.minValue;
+			spec.maxValue     = def.maxValue;
+			spec.step         = 0.05f;
+			spec.format       = "%.2fx";
+			spec.resetValue   = 1.0f;
+			spec.active       = active;
+			spec.disableSlider = !baselineReady;
+			spec.depth        = depth;
+			spec.openFlag     = openFlag;
+			spec.padForArrow  = true;
+			spec.showLive     = g_showLiveValues.load();
+			spec.expected     = g_dbgRawExpected[raw].load();
+			spec.game         = g_dbgRawGame[raw].load();
+			spec.composing    = active;
+			// Max Energy is the one raw row backed by a real GAS attribute --
+			// baseline-driven rows have no BaseValue, so `unmodified` is the
+			// captured stock baseline and no Base line/tag ever applies to them.
+			spec.hasBase      = (raw == kRawMaxEnergy);
+			spec.base         = g_dbgRawBase[raw].load();
+			spec.unmodified   = (raw == kRawMaxEnergy) ? g_dbgRawBuffed[raw].load() : g_rawBaseline[raw].load();
+			spec.changeDesc   = changeDesc;
+			spec.tagWord      = "buff";
+			spec.baseLabel    = "Base (no LEMs/buffs)";
+			spec.labelReserve = labelReserve;
+			spec.resetTooltip = "Put the game's stock value back (turns this row off).";
 
-			imgui->TableSetColumnIndex(1);
-			imgui->BeginDisabled(!baselineReady);
-
-			float availX = 0.0f, availY = 0.0f;
-			imgui->GetContentRegionAvail(&availX, &availY);
-
-			float textW = 0.0f, textH = 0.0f;
-			imgui->CalcTextSize("-88.88x", &textW, &textH, false, -1.0f);
-
-			const float frameH  = imgui->GetFrameHeight();
-			const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f);
-			const float sliderW = (availX > numBoxW + frameH * 2.0f)
-				? (availX - numBoxW)
-				: (availX * 0.55f);
-
-			bool changed = false;
-			imgui->SetNextItemWidth(sliderW);
-			if (imgui->SliderFloat("##slider", &value, def.minValue, def.maxValue, "%.2fx"))
-				changed = true;
-
-			imgui->SameLine(0.0f, 0.0f);
-			imgui->SetNextItemWidth(-1.0f);
-			if (imgui->InputFloat("##num", &value, 0.05f, 0.5f, "%.2fx"))
-				changed = true;
-
-			if (changed)
+			const BetterCheats::UI::RowResult result = BuildRow(imgui, spec);
+			if (result.changed)
 			{
-				if (value < def.minValue) value = def.minValue;
-				if (value > def.maxValue) value = def.maxValue;
 				g_rawValues[raw].store(value);
 				SessionConfig::Set(RawConfigKey(def.key), value);
+				if (result.resetClicked)
+					g_rawRestoreWanted[raw].store(true);
 			}
-			imgui->EndDisabled();
-
-			imgui->TableSetColumnIndex(2);
-			if (BetterCheats::UI::ResetButton(imgui, "##reset"))
-			{
-				value = 1.0f;
-				g_rawValues[raw].store(value);
-				SessionConfig::Set(RawConfigKey(def.key), value);
-				g_rawRestoreWanted[raw].store(true);
-			}
-			if (imgui->IsItemHovered())
-				imgui->SetTooltip("Put the game's stock value back (turns this row off).");
 
 			imgui->PopID();
 		}
@@ -1306,20 +1179,12 @@ namespace BetterCheats::Panels::Movement
 
 			// Widest label across both row kinds decides where the live-values
 			// readout starts, so every row's readout lines up across every group.
-			float labelReserve = 0.0f;
-			for (int a = 0; a < kAttrCount; ++a)
-			{
-				float w = 0.0f, h = 0.0f;
-				imgui->CalcTextSize(kAttrs[a].label, &w, &h, false, -1.0f);
-				if (w > labelReserve) labelReserve = w;
-			}
-			for (int r = 0; r < kRawCount; ++r)
-			{
-				float w = 0.0f, h = 0.0f;
-				imgui->CalcTextSize(kRaws[r].label, &w, &h, false, -1.0f);
-				if (w > labelReserve) labelReserve = w;
-			}
-			labelReserve += imgui->GetFrameHeight() * 3.0f;   // arrow + max indent depth
+			// +2 extra levels (on top of the base 1x): arrow button + one indent
+			// step, the deepest a child row ever sits.
+			const float labelReserve = (std::max)(
+				BetterCheats::UI::PrescanLabelWidth(imgui, kAttrCount, [](int a) { return kAttrs[a].label; }, 2),
+				BetterCheats::UI::PrescanLabelWidth(imgui, kRawCount,  [](int r) { return kRaws[r].label; },  2));
+			const float readoutColumnWidth = BetterCheats::UI::GetReadoutColumnWidth(imgui, labelReserve);
 
 			for (int g = 0; g < kTuneGroupCount; ++g)
 			{
@@ -1332,7 +1197,10 @@ namespace BetterCheats::Panels::Movement
 				if (!imgui->BeginTable(grp.tableId, 3, kTableFlags))
 					continue;
 
-				imgui->TableSetupColumn("Attribute", 0, 0.36f);
+				// Fixed, not stretched -- see player_weapons.cpp's identical table
+				// for why (must fit the readout, and the slider has slack to give
+				// up now that it's capped).
+				imgui->TableSetupColumn("Attribute", BetterCheats::UI::kColumnWidthFixed, readoutColumnWidth);
 				imgui->TableSetupColumn("Value",     0, 0.54f);
 				imgui->TableSetupColumn("",          0, 0.10f);
 
@@ -1636,7 +1504,7 @@ namespace BetterCheats::Panels::Movement
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Fly Speed Multiplier");
 			imgui->TableSetColumnIndex(1);
-			imgui->SetNextItemWidth(-1.0f);
+			imgui->SetNextItemWidth(BetterCheats::UI::GetSliderWidthCap(imgui));
 			if (imgui->SliderFloat("##fly_speed", &speed, kMinFlySpeedMultiplier, kMaxFlySpeedMultiplier, "%.1fx"))
 			{
 				g_flySpeedMultiplier.store(speed);

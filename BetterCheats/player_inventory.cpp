@@ -2,6 +2,7 @@
 #include "plugin_helpers.h"
 #include "game_context.h"
 #include "session_config.h"
+#include "player_lookup.h"
 
 #include "Chimera_classes.hpp"
 #include "ChimeraUI_classes.hpp"
@@ -75,31 +76,11 @@ namespace BetterCheats::Panels::Inventory
 		}
 
 		// ---------------------------------------------------------------------
-		// Lookups. The cast is class-checked: the local pawn is replicated, and
-		// during a level transition or a multiplayer join it is briefly some
-		// other class — reading InventoryComponent off the wrong object reads
-		// past the end of it.
+		// Lookups. GetLocalCharacter (player_lookup.h) is class-checked: the local
+		// pawn is replicated, and during a level transition or a multiplayer join
+		// it is briefly some other class — reading InventoryComponent off the
+		// wrong object reads past the end of it.
 		// ---------------------------------------------------------------------
-		SDK::UWorld* GetWorldSafe()
-		{
-			try { return SDK::UWorld::GetWorld(); }
-			catch (...) { return nullptr; }
-		}
-
-		SDK::ACrCharacterPlayerBase* GetLocalCharacter()
-		{
-			SDK::UWorld* world = GetWorldSafe();
-			if (!world) return nullptr;
-
-			SDK::APlayerController* pc = SDK::UGameplayStatics::GetPlayerController(world, 0);
-			if (!pc || !pc->Pawn) return nullptr;
-
-			SDK::UClass* characterClass = SDK::ACrCharacterPlayerBase::StaticClass();
-			if (!characterClass || !pc->Pawn->IsA(characterClass)) return nullptr;
-
-			return static_cast<SDK::ACrCharacterPlayerBase*>(pc->Pawn);
-		}
-
 		SDK::UCrInventoryComponent* GetLocalInventory()
 		{
 			SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();

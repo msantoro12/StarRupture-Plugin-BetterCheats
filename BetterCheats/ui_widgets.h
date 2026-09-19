@@ -78,11 +78,41 @@ namespace BetterCheats::UI
 		return mag > 0.0f && (diff / mag) <= 1e-4f;
 	}
 
-	// Draws "<expected> = <game>" in blue on a match, "<expected> != <game>" in red
-	// otherwise. ASCII "!=" rather than U+2260 -- the loader's baked font ranges
-	// (imgui_backend.cpp) stop at Latin-1/Cyrillic plus a CJK merge that doesn't
-	// cover Mathematical Operators either, so the real glyph would render as "?".
-	inline void RenderLiveValue(IModLoaderImGui* imgui, float expected, float game)
+	// "Our change" as the row's own compose formula would describe it -- not the
+	// row's slider format string, since this always needs to read as a delta on
+	// top of the unmodified value, e.g. "x1.50" even on a row whose slider box
+	// shows "1.50x". Used only in RenderLiveValue's tooltip.
+	inline void FormatChangeDesc(char* out, size_t outSize, ComposedAttribute::Mode mode, float amount)
+	{
+		switch (mode)
+		{
+		case ComposedAttribute::Mode::Multiply: snprintf(out, outSize, "x%.2f",     amount); break;
+		case ComposedAttribute::Mode::Add:      snprintf(out, outSize, "%+.0f",    amount); break;
+		case ComposedAttribute::Mode::Absolute: snprintf(out, outSize, "set to %.0f", amount); break;
+		}
+	}
+
+	// Draws "<expected> = <game>" in blue on a match, "<expected> != <game>" in
+	// red otherwise, plus a "+<tagWord>" note in accent orange when `hasBase` and
+	// `base` (BaseValue, which we never write) differs from `unmodified` (the
+	// game's own aggregate, LEMs/buffs/attachments included, with our own change
+	// excluded) -- i.e. something external is contributing to this attribute.
+	// Every row, tag or not, gets one hover tooltip over the whole group,
+	// spelling out the chain a lone "expected = game" can't show on its own:
+	//
+	//   Unmodified: <v>                              -- always
+	//   <baseLabel>: <v>                              -- only when it != Unmodified
+	//   Our change: x1.50 / +15 / set to 2 / none     -- "none" while inactive
+	//   Set to: <expected>
+	//   Live in game: <game>
+	//
+	// ASCII "!=" and "->" rather than U+2260/U+2192 -- the loader's baked font
+	// ranges (imgui_backend.cpp) stop at Latin-1/Cyrillic plus a CJK merge that
+	// doesn't cover Mathematical Operators or Arrows either, so the real glyphs
+	// would render as "?".
+	inline void RenderLiveValue(IModLoaderImGui* imgui, float expected, float game,
+	                             bool active, bool hasBase, float base, float unmodified,
+	                             const char* changeDesc, const char* tagWord, const char* baseLabel)
 	{
 		char e[32], g[32], line[80];
 		FormatLiveValue(e, sizeof(e), expected);
@@ -90,57 +120,225 @@ namespace BetterCheats::UI
 		const bool match = LiveValuesMatch(expected, game);
 		snprintf(line, sizeof(line), "%s %s %s", e, match ? "=" : "!=", g);
 
-		if (match) imgui->TextColored(0.310f, 0.639f, 0.878f, 1.0f, line);   // #4FA3E0
-		else       imgui->TextColored(0.878f, 0.282f, 0.282f, 1.0f, line);   // #E04848
-	}
-
-	// "Our change" as the row's own compose formula would describe it -- not the
-	// row's slider format string, since this always needs to read as a delta on
-	// top of `buffed`, e.g. "x1.50" even on a row whose slider box shows "1.50x".
-	inline void FormatChangeDesc(char* out, size_t outSize, ComposedAttribute::Mode mode, float amount)
-	{
-		switch (mode)
-		{
-		case ComposedAttribute::Mode::Multiply: snprintf(out, outSize, "x%.2f",  amount); break;
-		case ComposedAttribute::Mode::Add:      snprintf(out, outSize, "%+.0f", amount); break;
-		case ComposedAttribute::Mode::Absolute: snprintf(out, outSize, "= %.0f", amount); break;
-		}
-	}
-
-	// Call right after RenderLiveValue, on the same line (caller does the
-	// SameLine -- this never starts one itself, so a no-op call here leaves the
-	// cursor exactly where a real tag would have). No-op when `buffed` (the
-	// game's aggregate, LEMs/attachments included) matches `base` (BaseValue,
-	// which we never write) -- nothing external is contributing right now.
-	// Otherwise draws "+<tagWord> <base>-><buffed>" in accent orange and attaches
-	// a hover tooltip spelling out the whole chain: base, buffed (`withPhrase`,
-	// e.g. "With LEMs/buffs" or "With attachments"), our own change, the result
-	// that composes to, and what's actually live in the game right now.
-	// ASCII "->" rather than U+2192: same font-range limitation as RenderLiveValue's "!=".
-	inline void RenderBuffTag(IModLoaderImGui* imgui, const char* tagWord, const char* withPhrase,
-	                           float base, float buffed, const char* changeDesc,
-	                           float expected, float game)
-	{
-		if (LiveValuesMatch(base, buffed))
-			return;
-
-		char baseStr[32], buffedStr[32], expectedStr[32], gameStr[32], tag[80];
-		FormatLiveValue(baseStr, sizeof(baseStr), base);
-		FormatLiveValue(buffedStr, sizeof(buffedStr), buffed);
-		FormatLiveValue(expectedStr, sizeof(expectedStr), expected);
-		FormatLiveValue(gameStr, sizeof(gameStr), game);
-		snprintf(tag, sizeof(tag), "+%s %s->%s", tagWord, baseStr, buffedStr);
+		const bool showTag = hasBase && !LiveValuesMatch(base, unmodified);
 
 		imgui->BeginGroup();
-		imgui->TextColored(0.910f, 0.639f, 0.239f, 1.0f, tag);   // accent orange, ~#E8A33D
+		if (match) imgui->TextColored(0.310f, 0.639f, 0.878f, 1.0f, line);   // #4FA3E0
+		else       imgui->TextColored(0.878f, 0.282f, 0.282f, 1.0f, line);   // #E04848
+		if (showTag)
+		{
+			char tag[16];
+			snprintf(tag, sizeof(tag), "+%s", tagWord);
+			imgui->SameLine(0.0f, 8.0f);
+			imgui->TextColored(0.910f, 0.639f, 0.239f, 1.0f, tag);   // accent orange, ~#E8A33D
+		}
 		imgui->EndGroup();
 
 		if (imgui->IsItemHovered())
 		{
-			char tip[256];
-			snprintf(tip, sizeof(tip), "Base %s\n%s %s\nOur change %s\nResult %s\nLive in game %s",
-				baseStr, withPhrase, buffedStr, changeDesc, expectedStr, gameStr);
+			char unmodStr[32], baseStr[32], expectedStr[32], gameStr[32], tip[320];
+			FormatLiveValue(unmodStr, sizeof(unmodStr), unmodified);
+			FormatLiveValue(expectedStr, sizeof(expectedStr), expected);
+			FormatLiveValue(gameStr, sizeof(gameStr), game);
+
+			int n = snprintf(tip, sizeof(tip), "Unmodified: %s", unmodStr);
+			if (hasBase && !LiveValuesMatch(base, unmodified))
+			{
+				FormatLiveValue(baseStr, sizeof(baseStr), base);
+				n += snprintf(tip + n, sizeof(tip) - n, "\n%s: %s", baseLabel, baseStr);
+			}
+			n += snprintf(tip + n, sizeof(tip) - n, "\nOur change: %s", active ? changeDesc : "none");
+			n += snprintf(tip + n, sizeof(tip) - n, "\nSet to: %s", expectedStr);
+			snprintf(tip + n, sizeof(tip) - n, "\nLive in game: %s", gameStr);
 			imgui->SetTooltip(tip);
 		}
+	}
+
+	// Widest of `count` labels (fetched one at a time through `getLabel`, so
+	// callers with labels sitting inside a struct array don't need to copy them
+	// into a flat `const char**` first), plus one frame-height of padding per
+	// nesting level -- shared by every "Show live values" column so its readout
+	// starts at the same X on every row regardless of that row's own label
+	// length. `extraLevels` covers a panel's own arrow/indent room on top of the
+	// base row (Movement's disclosure-arrow rows want more headroom than
+	// Weapons' flat list, which passes 0).
+	template <typename GetLabel>
+	inline float PrescanLabelWidth(IModLoaderImGui* imgui, int count, GetLabel getLabel, int extraLevels = 0)
+	{
+		float widest = 0.0f;
+		for (int i = 0; i < count; ++i)
+		{
+			float w = 0.0f, h = 0.0f;
+			imgui->CalcTextSize(getLabel(i), &w, &h, false, -1.0f);
+			if (w > widest) widest = w;
+		}
+		return widest + imgui->GetFrameHeight() * (1.0f + static_cast<float>(extraLevels));
+	}
+
+	// ImGuiTableColumnFlags_WidthFixed -- pass as a column's own flags in
+	// TableSetupColumn to give it a pixel width instead of a stretch weight,
+	// even inside a table whose overall sizing policy is stretch-proportional
+	// (mixing a fixed label/readout column with stretch value/reset columns is
+	// standard ImGui table usage).
+	constexpr int kColumnWidthFixed = 1 << 4;
+
+	// Column-0 (Attribute) width wide enough for the longest label AND the
+	// live-values readout next to it -- "<label>   <expected> = <game> +tag" --
+	// so BuildRow's readout can never clip against column 1. `labelReserve` is
+	// PrescanLabelWidth's own result (where the readout starts); this adds room
+	// for a representative worst-case readout plus the tag word (RenderLiveValue
+	// keeps the tag to just the word -- see its own comment for why).
+	inline float GetReadoutColumnWidth(IModLoaderImGui* imgui, float labelReserve)
+	{
+		float readoutW = 0.0f, tagW = 0.0f, h = 0.0f;
+		imgui->CalcTextSize("-888.88 = -888.88", &readoutW, &h, false, -1.0f);
+		imgui->CalcTextSize(" +mods", &tagW, &h, false, -1.0f);   // same width as " +buff"
+		return labelReserve + readoutW + tagW + imgui->GetFrameHeight() * 0.5f;
+	}
+
+	// 240px at the loader's base font size (kBasePx = 15.0f in
+	// imgui_backend.cpp). GetFontSize() is already FontScale-adjusted, so this
+	// scales the cap the same way the loader scales everything else.
+	inline float GetSliderWidthCap(IModLoaderImGui* imgui)
+	{
+		return 240.0f * (imgui->GetFontSize() / 15.0f);
+	}
+
+	// One full cheat-slider row: label (+ optional disclosure arrow/indent), the
+	// "Show live values" readout (+ "+buff"/"+mods" tag when hasBase), a slider
+	// joined to a typed number box (width capped per GetSliderWidthCap unless
+	// sliderWidthCap overrides it), and the drawn reset button. Must run inside
+	// an open 3-column table (Attribute / Value / reset), after the caller's own
+	// TableNextRow and PushID -- ID scheme and persistence (SessionConfig::Set)
+	// stay with the caller, since weapons and movement key theirs differently
+	// and only the caller knows which config entry a row maps to.
+	struct RowSpec
+	{
+		const char* label;
+		const char* tooltip = nullptr;
+		float*      value;
+		float       minValue, maxValue, step;
+		const char* format;
+		float       resetValue;
+		bool        active         = true;
+		bool        disableSlider  = false;
+		float       sliderWidthCap = 0.0f;   // 0 = GetSliderWidthCap(imgui)
+
+		// Disclosure arrow / indent (Movement only -- weapons leaves these at
+		// their defaults, which draws a flat, unindented row).
+		int         depth       = 0;
+		bool*       openFlag    = nullptr;   // non-null draws a disclosure arrow
+		bool        padForArrow = false;     // indent non-arrow rows to match sibling arrow rows
+
+		// "Show live values" readout -- see RenderLiveValue for the full contract.
+		bool        showLive    = false;
+		float       expected = 0.0f, game = 0.0f;
+		bool        composing   = false;     // are we actually overriding this row right now (tooltip's "Our change")
+		bool        hasBase     = false;     // GAS rows only: enables the +tag and the tooltip's Base line
+		float       base = 0.0f, unmodified = 0.0f;
+		const char* changeDesc  = nullptr;
+		const char* tagWord     = "buff";
+		const char* baseLabel   = "Base (no LEMs/buffs)";
+		float       labelReserve = 0.0f;
+
+		const char* resetTooltip = "Reset to the game default (turns this row off).";
+	};
+
+	struct RowResult
+	{
+		bool changed      = false;   // slider, number box, or reset
+		bool resetClicked = false;   // reset specifically -- some callers need to react only to this
+	};
+
+	inline RowResult BuildRow(IModLoaderImGui* imgui, const RowSpec& spec)
+	{
+		RowResult result;
+		const float frameH = imgui->GetFrameHeight();
+
+		imgui->TableSetColumnIndex(0);
+
+		if (spec.depth > 0)
+			imgui->Indent(frameH * static_cast<float>(spec.depth));
+
+		if (spec.openFlag)
+		{
+			if (imgui->ArrowButton("##expand", *spec.openFlag ? 3 : 1))   // 3 = Down, 1 = Right
+				*spec.openFlag = !*spec.openFlag;
+			imgui->SameLine(0.0f, -1.0f);
+		}
+		else if (spec.padForArrow)
+		{
+			imgui->Indent(frameH);   // keep labels aligned with the arrowed rows
+		}
+
+		if (spec.active) imgui->Text(spec.label);
+		else              imgui->TextDisabled(spec.label);
+		if (spec.tooltip && imgui->IsItemHovered())
+			imgui->SetTooltip(spec.tooltip);
+
+		if (spec.showLive)
+		{
+			imgui->SameLine(spec.labelReserve, 0.0f);
+			RenderLiveValue(imgui, spec.expected, spec.game, spec.composing, spec.hasBase,
+				spec.base, spec.unmodified, spec.changeDesc, spec.tagWord, spec.baseLabel);
+		}
+
+		if (!spec.openFlag && spec.padForArrow)
+			imgui->Unindent(frameH);
+		if (spec.depth > 0)
+			imgui->Unindent(frameH * static_cast<float>(spec.depth));
+
+		// Slider for feel, typed box on the right for precision. Zero spacing
+		// between them so they read as one joined control.
+		imgui->TableSetColumnIndex(1);
+		if (spec.disableSlider)
+			imgui->BeginDisabled(true);
+
+		float availX = 0.0f, availY = 0.0f;
+		imgui->GetContentRegionAvail(&availX, &availY);
+
+		// InputFloat draws [text][-][+]. Measure the widest value this row can
+		// actually show rather than guessing a pixel count -- the loader's
+		// FontScale is user-configurable, so anything hardcoded clips at some scale.
+		char widest[32];
+		snprintf(widest, sizeof(widest), spec.format, (spec.maxValue >= 100.0f) ? -888.0f : -88.88f);
+		float textW = 0.0f, textH = 0.0f;
+		imgui->CalcTextSize(widest, &textW, &textH, false, -1.0f);
+
+		const float numBoxW = textW + (frameH * 2.0f) + (frameH * 0.9f); // text + 2 steppers + padding
+		const float cap     = (spec.sliderWidthCap > 0.0f) ? spec.sliderWidthCap : GetSliderWidthCap(imgui);
+		float sliderW = (availX > numBoxW + frameH * 2.0f) ? (availX - numBoxW) : (availX * 0.55f);
+		if (sliderW > cap) sliderW = cap;
+
+		bool changed = false;
+		imgui->SetNextItemWidth(sliderW);
+		if (imgui->SliderFloat("##slider", spec.value, spec.minValue, spec.maxValue, spec.format))
+			changed = true;
+
+		imgui->SameLine(0.0f, 0.0f);
+		imgui->SetNextItemWidth(-1.0f);
+		if (imgui->InputFloat("##num", spec.value, spec.step, spec.step * 10.0f, spec.format))
+			changed = true;
+
+		if (changed)
+		{
+			if (*spec.value < spec.minValue) *spec.value = spec.minValue;
+			if (*spec.value > spec.maxValue) *spec.value = spec.maxValue;
+			result.changed = true;
+		}
+		if (spec.disableSlider)
+			imgui->EndDisabled();
+
+		imgui->TableSetColumnIndex(2);
+		if (ResetButton(imgui, "##reset"))
+		{
+			*spec.value = spec.resetValue;
+			result.changed      = true;
+			result.resetClicked = true;
+		}
+		if (imgui->IsItemHovered())
+			imgui->SetTooltip(spec.resetTooltip);
+
+		return result;
 	}
 }

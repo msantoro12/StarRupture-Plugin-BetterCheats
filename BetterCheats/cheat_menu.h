@@ -59,10 +59,10 @@ namespace BetterCheats
 	private:
 		static void OnPanelClosed(PanelHandle handle);
 		static void OnRender(IModLoaderImGui* imgui);
-		static void RenderSidebar(IModLoaderImGui* imgui);
+		static void RenderSidebar(IModLoaderImGui* imgui, float navWidth);
 		static void RenderContent(IModLoaderImGui* imgui);
 		static void RenderUnavailableMessage(IModLoaderImGui* imgui, float avail_x, float avail_y, const char* message);
-		static void NavItem(IModLoaderImGui* imgui, const char* label, MenuCategory cat);
+		static void NavItem(IModLoaderImGui* imgui, const char* label, MenuCategory cat, float navWidth);
 
 		static IPluginSelf*      s_self;
 		static PanelHandle       s_panelHandle;
