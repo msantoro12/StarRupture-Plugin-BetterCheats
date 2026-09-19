@@ -6,6 +6,7 @@
 #include "game_context.h"
 #include "session_config.h"
 #include "ui_widgets.h"
+#include "attribute_compose.h"
 
 #include "Chimera_classes.hpp"
 
@@ -51,6 +52,13 @@ namespace BetterCheats::Panels::Movement
 		// no separate enable toggle to keep in sync -- resetting a row IS disabling
 		// it. Mirrors player_weapons.cpp.
 		constexpr float kActiveEpsilon = 0.0001f;
+
+		// MaxEnergy.CurrentValue is an absolute stamina-pool size, not a multiplier,
+		// so its composed result gets a generous sanity clamp instead of reusing
+		// kRaws[kRawMaxEnergy]'s 0.10x-20.0x range -- that range bounds the slider
+		// (the multiplier), not the pool size it produces.
+		constexpr float kMaxEnergyFloor   = 1.0f;
+		constexpr float kMaxEnergyCeiling = 1000000.0f;
 
 		// Wanted state — written from the render thread and the keybind callback,
 		// read on the game thread.
@@ -314,29 +322,51 @@ namespace BetterCheats::Panels::Movement
 
 		const AttrDef kAttrs[kAttrCount] = {
 			{ "Move Speed",           "moveSpeed",         1.0f, 0.10f, 10.0f, 0.05f, "%.2fx",
-			  "CurrentMovementSpeedMultiplier -- this is what walking/running actually reads." },
+			  "CurrentMovementSpeedMultiplier -- this is what walking/running actually reads.\n"
+			  "Multiplies the game's own value, so a movement LEM bonus is kept, not overwritten." },
 			{ "Move Speed Cap",       "moveSpeedMax",      1.0f, 0.10f, 10.0f, 0.05f, "%.2fx",
-			  "Ceiling Move Speed is clamped to. Raise this alongside Move Speed or a high\n"
-			  "override gets clamped back down." },
+			  "Ceiling Move Speed is clamped to -- set directly, not multiplied. Raise this\n"
+			  "alongside Move Speed or a high override gets clamped back down." },
 			{ "Move Speed Floor",     "moveSpeedMin",      1.0f, 0.00f,  5.0f, 0.05f, "%.2fx",
-			  "Floor Move Speed is clamped to. Raise this so slows and debuffs can never\n"
-			  "drop you below it." },
+			  "Floor Move Speed is clamped to -- set directly, not multiplied. Raise this so\n"
+			  "slows and debuffs can never drop you below it." },
 			{ "Sprint Speed",         "sprintSpeed",       1.0f, 0.10f,  5.0f, 0.05f, "%.2fx",
-			  "Multiplies sprint speed on top of Move Speed." },
+			  "Multiplies sprint speed on top of Move Speed and any LEM bonus already on it." },
 			{ "Jump Height",          "jumpHeight",        1.0f, 0.10f,  8.0f, 0.05f, "%.2fx",
-			  "Multiplies jump height/impulse." },
+			  "Multiplies jump height/impulse, LEM bonuses included." },
 			{ "Double Jump Cost",     "doubleJumpCost",    1.0f, 0.00f,  3.0f, 0.05f, "%.2fx",
-			  "Stamina cost multiplier for double jump. 0 makes it free." },
+			  "Stamina cost multiplier for double jump, on top of any LEM discount (e.g.\n"
+			  "Airjumper). 0 makes it free." },
 			{ "Dodge Cost",           "dodgeCost",         1.0f, 0.00f,  3.0f, 0.05f, "%.2fx",
 			  "Stamina cost multiplier for dodge/dash. 0 makes it free." },
 			{ "Stamina Regen",        "staminaRegen",      1.0f, 0.10f, 10.0f, 0.05f, "%.2fx",
-			  "Stamina regeneration rate." },
+			  "Stamina regeneration rate, on top of any LEM bonus (e.g. Runner)." },
 			{ "Slide Stamina Regen",  "slideStaminaRegen", 1.0f, 0.10f, 10.0f, 0.05f, "%.2fx",
-			  "Stamina regeneration rate while sliding." },
+			  "Stamina regeneration rate while sliding, on top of any LEM bonus\n"
+			  "(e.g. Slidegiver)." },
 			{ "Fall Damage",          "fallDamage",        1.0f, 0.00f,  3.0f, 0.05f, "%.2fx",
 			  "Fall damage taken multiplier. 0 removes fall damage entirely." },
 			{ "Zipline Speed",        "ziplineSpeed",      1.0f, 0.10f,  5.0f, 0.05f, "%.2fx",
 			  "Travel speed multiplier while riding a zipline." },
+		};
+
+		// Apply() mode per row, aligned with AttrIndex. Multiply composes onto
+		// whatever the ability system aggregated (LEM bonuses included); Absolute
+		// replaces it outright, which only fits the cap/floor pair below -- those
+		// attributes are the literal clamp bounds Move Speed is held between, not a
+		// modifier layered on top of one.
+		constexpr BetterCheats::ComposedAttribute::Mode kAttrModes[kAttrCount] = {
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Move Speed
+			BetterCheats::ComposedAttribute::Mode::Absolute,  // Move Speed Cap
+			BetterCheats::ComposedAttribute::Mode::Absolute,  // Move Speed Floor
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Sprint Speed
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Jump Height
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Double Jump Cost
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Dodge Cost
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Stamina Regen
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Slide Stamina Regen
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Fall Damage
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Zipline Speed
 		};
 
 		// Written from RenderImGui (sliders, presets, reset) and read every tick from
@@ -359,12 +389,6 @@ namespace BetterCheats::Panels::Movement
 		std::string AttrConfigKey(const char* leaf)
 		{
 			return std::string("playerMovement.attr.") + leaf;
-		}
-
-		void WriteAttribute(SDK::FGameplayAttributeData& attribute, float value)
-		{
-			attribute.BaseValue    = value;
-			attribute.CurrentValue = value;
 		}
 
 		// The three attribute sets are different C++ classes, so a single
@@ -409,24 +433,65 @@ namespace BetterCheats::Panels::Movement
 			return v;
 		}
 
+		// One slot per row in kAttrs, shared across whichever of the three attribute
+		// sets actually owns it -- ComposedAttribute only cares about the owner
+		// pointer passed to it each call. Max Energy is a raw row (see kRaws below)
+		// but composes the same way, since UCrEnergyAttributeSet::MaxEnergy has no
+		// reflected base-value setter either. Game-thread only.
+		BetterCheats::ComposedAttribute g_composedAttrs[kAttrCount];
+		BetterCheats::ComposedAttribute g_composedMaxEnergy;
+
+		// Detects a respawn/world change and drops every composed slot before
+		// anything below tries to Apply/Release against an attribute set that may
+		// already be gone. Mirrors the g_appliedTo check MaintainNoClip/Tick already
+		// use for the same reason.
+		SDK::ACrCharacterPlayerBase* g_composedCharacter = nullptr;
+
+		void ForgetComposedIfCharacterChanged(SDK::ACrCharacterPlayerBase* character)
+		{
+			if (character == g_composedCharacter) return;
+			for (int a = 0; a < kAttrCount; ++a)
+				g_composedAttrs[a].Forget();
+			g_composedMaxEnergy.Forget();
+			g_composedCharacter = character;
+		}
+
 		void ApplyAttributeOverrides(SDK::ACrCharacterPlayerBase* character)
 		{
 			try
 			{
 				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
 					for (const MoveBinding& b : kMoveBindings)
+					{
+						SDK::FGameplayAttributeData& attr = set->*b.member;
 						if (IsAttrActive(b.attr))
-							WriteAttribute(set->*b.member, SafeAttrValue(b.attr));
+							g_composedAttrs[b.attr].Apply(set, attr, SafeAttrValue(b.attr), kAttrModes[b.attr],
+								kAttrs[b.attr].minValue, kAttrs[b.attr].maxValue);
+						else
+							g_composedAttrs[b.attr].Release(set, attr);
+					}
 
 				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
 					for (const SpeedBinding& b : kSpeedBindings)
+					{
+						SDK::FGameplayAttributeData& attr = set->*b.member;
 						if (IsAttrActive(b.attr))
-							WriteAttribute(set->*b.member, SafeAttrValue(b.attr));
+							g_composedAttrs[b.attr].Apply(set, attr, SafeAttrValue(b.attr), kAttrModes[b.attr],
+								kAttrs[b.attr].minValue, kAttrs[b.attr].maxValue);
+						else
+							g_composedAttrs[b.attr].Release(set, attr);
+					}
 
 				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
 					for (const GemBinding& b : kGemBindings)
+					{
+						SDK::FGameplayAttributeData& attr = set->*b.member;
 						if (IsAttrActive(b.attr))
-							WriteAttribute(set->*b.member, SafeAttrValue(b.attr));
+							g_composedAttrs[b.attr].Apply(set, attr, SafeAttrValue(b.attr), kAttrModes[b.attr],
+								kAttrs[b.attr].minValue, kAttrs[b.attr].maxValue);
+						else
+							g_composedAttrs[b.attr].Release(set, attr);
+					}
 			}
 			catch (...) {}
 		}
@@ -496,7 +561,7 @@ namespace BetterCheats::Panels::Movement
 			{ "Base Speed",        "zipSpeed",      0.10f, 10.0f, "Travel speed on a zipline (your rider, not the zipline itself)." },
 			{ "Ramp Up",           "zipAccel",      0.10f, 10.0f, "How fast you get up to zipline speed." },
 
-			{ "Max Energy",        "maxEnergy",     0.10f, 20.0f, "Size of the stamina pool. Sprint, jump and dash all draw from it." },
+			{ "Max Energy",        "maxEnergy",     0.10f, 20.0f, "Size of the stamina pool. Sprint, jump and dash all draw from it.\nMultiplies the game's live value, so a LEM bonus (e.g. Endurancegiver)\nis kept, not overwritten." },
 			{ "Regen Delay",       "regenDelay",    0.00f,  3.0f, "Pause before energy starts refilling. 0 regenerates immediately." },
 			{ "Sprint Drain",      "sprintDrain",   0.00f,  3.0f, "Energy burned while sprinting. 0 makes sprinting free." },
 			{ "Regen Rate",        "regenRate",     0.10f, 20.0f, "How fast energy refills." },
@@ -604,8 +669,8 @@ namespace BetterCheats::Panels::Movement
 
 			g_rawBaseline[kRawAirDashes].store(static_cast<float>(move->MaxAirDashesToExecute));
 
-			if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-				g_rawBaseline[kRawMaxEnergy].store(energy->MaxEnergy.BaseValue);
+			// Max Energy has no baseline of its own to capture -- it composes onto
+			// the game's live value instead (see g_composedMaxEnergy).
 
 			if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
 				g_rawBaseline[kRawRegenDelay].store(logic->DelayBeforeEnergyRegeneration);
@@ -645,34 +710,53 @@ namespace BetterCheats::Panels::Movement
 			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
 			if (!move) return;
 
+			// Compared before every write below: once a row settles, re-deriving the
+			// same target value every tick is a write the game never asked for.
 			for (int i = 0; i < kCompBindCount; ++i)
 			{
 				const int r = kCompBinds[i].raw;
-				if (IsRawActive(r))
-					move->*kCompBinds[i].member = g_rawBaseline[r].load() * SafeMultiplier(r);
+				if (!IsRawActive(r)) continue;
+				float& field = move->*kCompBinds[i].member;
+				const float want = g_rawBaseline[r].load() * SafeMultiplier(r);
+				if (field != want) field = want;
 			}
 
 			for (int i = 0; i < kCharBindCount; ++i)
 			{
 				const int r = kCharBinds[i].raw;
-				if (IsRawActive(r))
-					character->*kCharBinds[i].member = g_rawBaseline[r].load() * SafeMultiplier(r);
+				if (!IsRawActive(r)) continue;
+				float& field = character->*kCharBinds[i].member;
+				const float want = g_rawBaseline[r].load() * SafeMultiplier(r);
+				if (field != want) field = want;
 			}
 
 			if (IsRawActive(kRawAirDashes))
 			{
-				const float want = g_rawBaseline[kRawAirDashes].load() * SafeMultiplier(kRawAirDashes);
-				move->MaxAirDashesToExecute = static_cast<int>(want + 0.5f);
+				const float want    = g_rawBaseline[kRawAirDashes].load() * SafeMultiplier(kRawAirDashes);
+				const int   wantInt = static_cast<int>(want + 0.5f);
+				if (move->MaxAirDashesToExecute != wantInt)
+					move->MaxAirDashesToExecute = wantInt;
 			}
 
-			if (IsRawActive(kRawMaxEnergy))
-				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-					WriteAttribute(energy->MaxEnergy, g_rawBaseline[kRawMaxEnergy].load() * SafeMultiplier(kRawMaxEnergy));
+			// Max Energy composes onto the live game value instead of a captured
+			// baseline (see g_composedMaxEnergy) -- ComposedAttribute::Apply/Release
+			// already compare before writing.
+			if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
+			{
+				if (IsRawActive(kRawMaxEnergy))
+					g_composedMaxEnergy.Apply(energy, energy->MaxEnergy, SafeMultiplier(kRawMaxEnergy),
+						BetterCheats::ComposedAttribute::Mode::Multiply, kMaxEnergyFloor, kMaxEnergyCeiling);
+				else
+					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
+			}
 
 			if (IsRawActive(kRawRegenDelay))
 				if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
-					logic->DelayBeforeEnergyRegeneration =
-						g_rawBaseline[kRawRegenDelay].load() * SafeMultiplier(kRawRegenDelay);
+				{
+					const float want = g_rawBaseline[kRawRegenDelay].load() * SafeMultiplier(kRawRegenDelay);
+					if (logic->DelayBeforeEnergyRegeneration != want)
+						logic->DelayBeforeEnergyRegeneration = want;
+				}
 		}
 
 		// Reset writes the captured baseline back once, because leaving the multiplier
@@ -697,8 +781,10 @@ namespace BetterCheats::Panels::Movement
 				move->MaxAirDashesToExecute = static_cast<int>(baseline + 0.5f);
 			else if (raw == kRawMaxEnergy)
 			{
+				// No baseline to write back -- hand CurrentValue to whatever the game
+				// currently has (see g_composedMaxEnergy).
 				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-					WriteAttribute(energy->MaxEnergy, baseline);
+					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
 			}
 			else if (raw == kRawRegenDelay)
 			{
@@ -923,7 +1009,13 @@ namespace BetterCheats::Panels::Movement
 			const bool    baselineReady = g_rawBaselineReady.load();
 
 			char tip[512];
-			if (baselineReady)
+			if (raw == kRawMaxEnergy)
+			{
+				// Composed onto the live game value (see g_composedMaxEnergy), not a
+				// captured baseline, so there is no fixed "stock value" to show here.
+				snprintf(tip, sizeof(tip), "%s", def.tooltip);
+			}
+			else if (baselineReady)
 			{
 				const float baseline = g_rawBaseline[raw].load();
 				snprintf(tip, sizeof(tip), "%s\n\nStock value: %.3f\nApplied: %.3f",
@@ -1156,11 +1248,36 @@ namespace BetterCheats::Panels::Movement
 		// so put it back — but only if the pawn we changed is still the live one.
 		try
 		{
-			if (g_active)
+			SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
+
+			if (g_active && character && character == g_appliedTo)
+				Disable(character);
+
+			// Same rule for the composed overrides: hand CurrentValue back only if
+			// it's still the same character/attribute-set combination they were
+			// captured against, otherwise just drop the state.
+			if (character && character == g_composedCharacter)
 			{
-				SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
-				if (character && character == g_appliedTo)
-					Disable(character);
+				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
+					for (const MoveBinding& b : kMoveBindings)
+						g_composedAttrs[b.attr].Release(set, set->*b.member);
+
+				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
+					for (const SpeedBinding& b : kSpeedBindings)
+						g_composedAttrs[b.attr].Release(set, set->*b.member);
+
+				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
+					for (const GemBinding& b : kGemBindings)
+						g_composedAttrs[b.attr].Release(set, set->*b.member);
+
+				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
+					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
+			}
+			else
+			{
+				for (int a = 0; a < kAttrCount; ++a)
+					g_composedAttrs[a].Forget();
+				g_composedMaxEnergy.Forget();
 			}
 		}
 		catch (...) {}
@@ -1186,6 +1303,11 @@ namespace BetterCheats::Panels::Movement
 				g_active    = false;
 				g_appliedTo = nullptr;
 			}
+
+			// Same idea for the composed GAS/Max Energy overrides -- drop them before
+			// anything below tries to Apply/Release against an attribute set that no
+			// longer belongs to the current pawn.
+			ForgetComposedIfCharacterChanged(character);
 
 			if (!character)
 			{
@@ -1280,6 +1402,8 @@ namespace BetterCheats::Panels::Movement
 			std::lock_guard<std::mutex> lock(g_snapshotMutex);
 			snap = g_snapshot;
 		}
+
+		imgui->TextDisabled("Multipliers apply on top of your base stats and any LEMs or game buffs.");
 
 		imgui->SeparatorText("Fly / No-Clip Movement");
 
