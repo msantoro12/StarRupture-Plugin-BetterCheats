@@ -42,10 +42,13 @@ static void OnToggleMenuPressed(EModKey /*key*/, EModKeyEvent /*event*/)
 	BetterCheats::CheatMenu::Toggle();
 }
 
-// Escape closes the menu like any other overlay's dismiss key. Registered by
-// enum, not RegisterKeybindByName: it's a universal convention, not a user
-// rebind, so it must not show up as a setting on the loader's config page.
-static void OnEscapePressed(EModKey /*key*/, EModKeyEvent /*event*/)
+// Escape and Q (the game's own close/cancel key) both close the menu like any
+// other overlay's dismiss keys. Registered by enum, not RegisterKeybindByName:
+// they're a universal convention, not a user rebind, so neither should show up
+// as a setting on the loader's config page. Plain RegisterKeybind is
+// non-blocking by default (see keybind_registry.cpp's blocking map), so Q still
+// reaches the game whenever the panel is closed.
+static void OnCloseKeyPressed(EModKey /*key*/, EModKeyEvent /*event*/)
 {
 	BetterCheats::CheatMenu::RequestClose();
 }
@@ -190,7 +193,8 @@ extern "C" {
 		// Register the toggle keybind — modloader tracks rebinds automatically
 		const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 		self->hooks->Input->RegisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
-		self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, &OnEscapePressed);
+		self->hooks->Input->RegisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, &OnCloseKeyPressed);
+		self->hooks->Input->RegisterKeybind(EModKey::Q, EModKeyEvent::Pressed, &OnCloseKeyPressed);
 
 		self->hooks->Engine->RegisterOnTick(&OnEngineTick);
 		self->hooks->World->RegisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
@@ -224,7 +228,8 @@ extern "C" {
 		{
 			const char* toggleKey = BetterCheatsConfig::Config::GetToggleKey();
 			g_self->hooks->Input->UnregisterKeybindByName(toggleKey, EModKeyEvent::Pressed, &OnToggleMenuPressed);
-			g_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, &OnEscapePressed);
+			g_self->hooks->Input->UnregisterKeybind(EModKey::Escape, EModKeyEvent::Pressed, &OnCloseKeyPressed);
+			g_self->hooks->Input->UnregisterKeybind(EModKey::Q, EModKeyEvent::Pressed, &OnCloseKeyPressed);
 			g_self->hooks->Engine->UnregisterOnTick(&OnEngineTick);
 			g_self->hooks->World->UnregisterOnExperienceLoadComplete(&OnExperienceLoadComplete);
 		}

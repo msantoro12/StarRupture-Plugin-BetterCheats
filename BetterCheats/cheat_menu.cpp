@@ -117,8 +117,9 @@ namespace BetterCheats
 
 	void CheatMenu::RequestClose()
 	{
-		// Runs on whatever thread fires the Escape keybind — no ImGui/SDK calls
+		// Runs on whatever thread fires the Escape/Q keybind — no ImGui/SDK calls
 		// here, just flag the request for OnRender to act on next frame.
+		LOG_DEBUG("CheatMenu: close key received (open: %s)", s_open.load() ? "yes" : "no");
 		if (s_open)
 			s_closeRequested.store(true);
 	}
@@ -144,13 +145,13 @@ namespace BetterCheats
 
 	void CheatMenu::OnRender(IModLoaderImGui* imgui)
 	{
-		constexpr int kFocusRootAndChildWindows = 3; // ImGuiFocusedFlags_RootAndChildWindows
-
 		// Deferred by a frame (see RequestClose): closing here, not in the keybind
-		// callback, means capture release can't land inside the same Escape press
-		// that requested it. Focus-gated so with multiple loader panels open,
-		// Escape only closes the one being looked at.
-		if (s_closeRequested.exchange(false) && imgui->IsWindowFocused(kFocusRootAndChildWindows))
+		// callback, means capture release can't land inside the same keypress
+		// that requested it. Not focus-gated: the owner runs this panel and
+		// BetterDrone together on the same toggle key, so at most one is ever
+		// focused (often neither, until clicked) -- Escape/Q close whichever of
+		// them is open regardless.
+		if (s_closeRequested.exchange(false))
 		{
 			Toggle();
 			return;

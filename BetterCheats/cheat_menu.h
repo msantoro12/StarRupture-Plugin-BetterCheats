@@ -52,7 +52,7 @@ namespace BetterCheats
 		static void Toggle();
 		static bool IsOpen() { return s_open; }
 
-		// Escape keybind callback flags a close; OnRender consumes it next frame
+		// Escape/Q keybind callback flags a close; OnRender consumes it next frame
 		// so capture is never released inside the same keypress that set it.
 		static void RequestClose();
 
