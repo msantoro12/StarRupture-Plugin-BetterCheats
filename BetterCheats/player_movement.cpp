@@ -456,42 +456,65 @@ namespace BetterCheats::Panels::Movement
 			g_composedCharacter = character;
 		}
 
+		// "Show live values" toggle -- default on so a fresh install proves the
+		// compose fix works without the owner having to find the setting.
+		std::atomic<bool> g_showLiveValues{ true };
+
+		// Per-row "expected = game" / "expected != game" readout, indexed like
+		// kAttrs/g_composedAttrs. `game` is CurrentValue read fresh at the start of
+		// this tick, before we touch it; `expected` is what we intend it to be (the
+		// composed result while active, or `game` itself while inactive). Compared
+		// pre-write so a lasting mismatch actually means something. Refreshed from
+		// Tick, read from RenderImGui. The raw-field equivalents (g_dbgRawGame/
+		// g_dbgRawExpected, including the Max Energy row) live below kRaws.
+		std::atomic<float> g_dbgAttrGame[kAttrCount];
+		std::atomic<float> g_dbgAttrExpected[kAttrCount];
+
+		// Movement-component block readout. -1 = not available yet.
+		std::atomic<float> g_dbgMaxWalkSpeed  { -1.0f };
+		std::atomic<float> g_dbgHorizSpeed    { -1.0f };
+		std::atomic<float> g_dbgJumpZVelocity { -1.0f };
+		std::atomic<float> g_dbgStaminaCurrent{ -1.0f };
+		std::atomic<float> g_dbgStaminaMax    { -1.0f };
+
+		// Applies one row and records its "expected = game" readout. Captures game
+		// (fresh CurrentValue) and, when the row was already active, the previous
+		// write BEFORE calling Apply -- comparing pre-write is what makes a lasting
+		// mismatch mean something instead of trivially matching what we just wrote.
+		template <typename Set>
+		void ApplyAttrRow(Set* set, SDK::FGameplayAttributeData& attr, int attrIndex)
+		{
+			const float gameBefore    = attr.CurrentValue;
+			const bool  wasActive     = g_composedAttrs[attrIndex].IsActive();
+			const float previousWrite = g_composedAttrs[attrIndex].GetWritten();
+
+			bool active = IsAttrActive(attrIndex);
+			if (active)
+				g_composedAttrs[attrIndex].Apply(set, attr, SafeAttrValue(attrIndex), kAttrModes[attrIndex],
+					kAttrs[attrIndex].minValue, kAttrs[attrIndex].maxValue);
+			else
+				g_composedAttrs[attrIndex].Release(set, attr);
+
+			const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+			g_dbgAttrGame[attrIndex].store(gameBefore);
+			g_dbgAttrExpected[attrIndex].store(expected);
+		}
+
 		void ApplyAttributeOverrides(SDK::ACrCharacterPlayerBase* character)
 		{
 			try
 			{
 				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
 					for (const MoveBinding& b : kMoveBindings)
-					{
-						SDK::FGameplayAttributeData& attr = set->*b.member;
-						if (IsAttrActive(b.attr))
-							g_composedAttrs[b.attr].Apply(set, attr, SafeAttrValue(b.attr), kAttrModes[b.attr],
-								kAttrs[b.attr].minValue, kAttrs[b.attr].maxValue);
-						else
-							g_composedAttrs[b.attr].Release(set, attr);
-					}
+						ApplyAttrRow(set, set->*b.member, b.attr);
 
 				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
 					for (const SpeedBinding& b : kSpeedBindings)
-					{
-						SDK::FGameplayAttributeData& attr = set->*b.member;
-						if (IsAttrActive(b.attr))
-							g_composedAttrs[b.attr].Apply(set, attr, SafeAttrValue(b.attr), kAttrModes[b.attr],
-								kAttrs[b.attr].minValue, kAttrs[b.attr].maxValue);
-						else
-							g_composedAttrs[b.attr].Release(set, attr);
-					}
+						ApplyAttrRow(set, set->*b.member, b.attr);
 
 				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
 					for (const GemBinding& b : kGemBindings)
-					{
-						SDK::FGameplayAttributeData& attr = set->*b.member;
-						if (IsAttrActive(b.attr))
-							g_composedAttrs[b.attr].Apply(set, attr, SafeAttrValue(b.attr), kAttrModes[b.attr],
-								kAttrs[b.attr].minValue, kAttrs[b.attr].maxValue);
-						else
-							g_composedAttrs[b.attr].Release(set, attr);
-					}
+						ApplyAttrRow(set, set->*b.member, b.attr);
 			}
 			catch (...) {}
 		}
@@ -579,6 +602,13 @@ namespace BetterCheats::Panels::Movement
 		std::atomic<float> g_rawBaseline[kRawCount];    // the game's shipped value, captured once
 		std::atomic<bool>  g_rawValuesInit{ false };
 		std::atomic<bool>  g_rawBaselineReady{ false };
+
+		// "expected = game" readout for the raw rows, same contract as
+		// g_dbgAttrGame/g_dbgAttrExpected above (see that comment). kRawMaxEnergy's
+		// slot is filled from g_composedMaxEnergy instead of baseline*multiplier,
+		// since that row composes rather than writing a captured baseline.
+		std::atomic<float> g_dbgRawGame[kRawCount];
+		std::atomic<float> g_dbgRawExpected[kRawCount];
 
 		void EnsureRawDefaults()
 		{
@@ -710,32 +740,53 @@ namespace BetterCheats::Panels::Movement
 			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
 			if (!move) return;
 
+			// Live-values block: read regardless of which rows are active, so the
+			// panel always shows what the game currently has.
+			g_dbgMaxWalkSpeed.store(move->MaxWalkSpeed);
+			g_dbgJumpZVelocity.store(move->JumpZVelocity);
+			{
+				const SDK::FVector& vel = move->Velocity;
+				g_dbgHorizSpeed.store(static_cast<float>(std::sqrt(vel.X * vel.X + vel.Y * vel.Y)));
+			}
+
 			// Compared before every write below: once a row settles, re-deriving the
-			// same target value every tick is a write the game never asked for.
+			// same target value every tick is a write the game never asked for. Each
+			// row also records "expected = game" for the live-values readout --
+			// `want` while active (what we intend), the field's own pre-write value
+			// while inactive (we intend nothing, so the game's own value IS expected).
 			for (int i = 0; i < kCompBindCount; ++i)
 			{
 				const int r = kCompBinds[i].raw;
-				if (!IsRawActive(r)) continue;
 				float& field = move->*kCompBinds[i].member;
-				const float want = g_rawBaseline[r].load() * SafeMultiplier(r);
-				if (field != want) field = want;
+				const float gameBefore = field;
+				const bool  active     = IsRawActive(r);
+				const float want       = g_rawBaseline[r].load() * SafeMultiplier(r);
+				if (active && field != want) field = want;
+				g_dbgRawGame[r].store(gameBefore);
+				g_dbgRawExpected[r].store(active ? want : gameBefore);
 			}
 
 			for (int i = 0; i < kCharBindCount; ++i)
 			{
 				const int r = kCharBinds[i].raw;
-				if (!IsRawActive(r)) continue;
 				float& field = character->*kCharBinds[i].member;
-				const float want = g_rawBaseline[r].load() * SafeMultiplier(r);
-				if (field != want) field = want;
+				const float gameBefore = field;
+				const bool  active     = IsRawActive(r);
+				const float want       = g_rawBaseline[r].load() * SafeMultiplier(r);
+				if (active && field != want) field = want;
+				g_dbgRawGame[r].store(gameBefore);
+				g_dbgRawExpected[r].store(active ? want : gameBefore);
 			}
 
-			if (IsRawActive(kRawAirDashes))
 			{
-				const float want    = g_rawBaseline[kRawAirDashes].load() * SafeMultiplier(kRawAirDashes);
-				const int   wantInt = static_cast<int>(want + 0.5f);
-				if (move->MaxAirDashesToExecute != wantInt)
+				const bool  active      = IsRawActive(kRawAirDashes);
+				const float gameBefore  = static_cast<float>(move->MaxAirDashesToExecute);
+				const float want        = g_rawBaseline[kRawAirDashes].load() * SafeMultiplier(kRawAirDashes);
+				const int   wantInt     = static_cast<int>(want + 0.5f);
+				if (active && move->MaxAirDashesToExecute != wantInt)
 					move->MaxAirDashesToExecute = wantInt;
+				g_dbgRawGame[kRawAirDashes].store(gameBefore);
+				g_dbgRawExpected[kRawAirDashes].store(active ? want : gameBefore);
 			}
 
 			// Max Energy composes onto the live game value instead of a captured
@@ -743,20 +794,37 @@ namespace BetterCheats::Panels::Movement
 			// already compare before writing.
 			if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
 			{
-				if (IsRawActive(kRawMaxEnergy))
+				const float gameBefore    = energy->MaxEnergy.CurrentValue;
+				const bool  wasActive     = g_composedMaxEnergy.IsActive();
+				const float previousWrite = g_composedMaxEnergy.GetWritten();
+				const bool  active        = IsRawActive(kRawMaxEnergy);
+
+				if (active)
 					g_composedMaxEnergy.Apply(energy, energy->MaxEnergy, SafeMultiplier(kRawMaxEnergy),
 						BetterCheats::ComposedAttribute::Mode::Multiply, kMaxEnergyFloor, kMaxEnergyCeiling);
 				else
 					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
+
+				const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+				g_dbgRawGame[kRawMaxEnergy].store(gameBefore);
+				g_dbgRawExpected[kRawMaxEnergy].store(expected);
+
+				// Live-values block: stamina current/max, read here since EnergyAttributes
+				// is already resolved.
+				g_dbgStaminaCurrent.store(energy->CurrentEnergy.CurrentValue);
+				g_dbgStaminaMax.store(energy->MaxEnergy.CurrentValue);
 			}
 
-			if (IsRawActive(kRawRegenDelay))
-				if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
-				{
-					const float want = g_rawBaseline[kRawRegenDelay].load() * SafeMultiplier(kRawRegenDelay);
-					if (logic->DelayBeforeEnergyRegeneration != want)
-						logic->DelayBeforeEnergyRegeneration = want;
-				}
+			if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
+			{
+				const float gameBefore = logic->DelayBeforeEnergyRegeneration;
+				const bool  active     = IsRawActive(kRawRegenDelay);
+				const float want       = g_rawBaseline[kRawRegenDelay].load() * SafeMultiplier(kRawRegenDelay);
+				if (active && logic->DelayBeforeEnergyRegeneration != want)
+					logic->DelayBeforeEnergyRegeneration = want;
+				g_dbgRawGame[kRawRegenDelay].store(gameBefore);
+				g_dbgRawExpected[kRawRegenDelay].store(active ? want : gameBefore);
+			}
 		}
 
 		// Reset writes the captured baseline back once, because leaving the multiplier
@@ -900,8 +968,12 @@ namespace BetterCheats::Panels::Movement
 		// Draws the label cell. A row with advanced detail underneath gets a disclosure
 		// arrow; rows without one are padded by the same width so every label in the
 		// group still lines up. Children are indented one step.
+		// `labelReserve` is where the "Show live values" readout starts (SameLine
+		// offset from the row start), shared across every row in the tab so it
+		// lines up regardless of that row's own label/indent/arrow width.
 		void DrawRowLabel(IModLoaderImGui* imgui, const char* label, const char* tooltip,
-		                  bool active, int depth, bool* openFlag)
+		                  bool active, int depth, bool* openFlag,
+		                  bool showLive, float expected, float game, float labelReserve)
 		{
 			const float frameH = imgui->GetFrameHeight();
 
@@ -924,6 +996,12 @@ namespace BetterCheats::Panels::Movement
 			if (tooltip && imgui->IsItemHovered())
 				imgui->SetTooltip(tooltip);
 
+			if (showLive)
+			{
+				imgui->SameLine(labelReserve, 0.0f);
+				BetterCheats::UI::RenderLiveValue(imgui, expected, game);
+			}
+
 			if (!openFlag)
 				imgui->Unindent(frameH);
 
@@ -931,7 +1009,7 @@ namespace BetterCheats::Panels::Movement
 				imgui->Unindent(frameH * static_cast<float>(depth));
 		}
 
-		void RenderAttrRow(IModLoaderImGui* imgui, int attr, int depth = 0, bool* openFlag = nullptr)
+		void RenderAttrRow(IModLoaderImGui* imgui, int attr, float labelReserve, int depth = 0, bool* openFlag = nullptr)
 		{
 			const AttrDef& def   = kAttrs[attr];
 			// ImGui writes through a plain float*, so the atomic is read into a local
@@ -943,7 +1021,8 @@ namespace BetterCheats::Panels::Movement
 			imgui->TableNextRow(0, 0.0f);
 
 			imgui->TableSetColumnIndex(0);
-			DrawRowLabel(imgui, def.label, def.tooltip, active, depth, openFlag);
+			DrawRowLabel(imgui, def.label, def.tooltip, active, depth, openFlag,
+				g_showLiveValues.load(), g_dbgAttrExpected[attr].load(), g_dbgAttrGame[attr].load(), labelReserve);
 
 			imgui->TableSetColumnIndex(1);
 
@@ -999,7 +1078,7 @@ namespace BetterCheats::Panels::Movement
 			imgui->PopID();
 		}
 
-		void RenderRawRow(IModLoaderImGui* imgui, int raw, int depth = 1, bool* openFlag = nullptr)
+		void RenderRawRow(IModLoaderImGui* imgui, int raw, float labelReserve, int depth = 1, bool* openFlag = nullptr)
 		{
 			const RawDef& def   = kRaws[raw];
 			// ImGui writes through a plain float*, so the atomic is read into a local
@@ -1029,7 +1108,8 @@ namespace BetterCheats::Panels::Movement
 			imgui->TableNextRow(0, 0.0f);
 
 			imgui->TableSetColumnIndex(0);
-			DrawRowLabel(imgui, def.label, tip, active, depth, openFlag);
+			DrawRowLabel(imgui, def.label, tip, active, depth, openFlag,
+				g_showLiveValues.load(), g_dbgRawExpected[raw].load(), g_dbgRawGame[raw].load(), labelReserve);
 
 			imgui->TableSetColumnIndex(1);
 			imgui->BeginDisabled(!baselineReady);
@@ -1171,6 +1251,23 @@ namespace BetterCheats::Panels::Movement
 			if (!g_rawBaselineReady.load())
 				imgui->TextDisabled("Advanced rows stay greyed until the game's stock values are read - load a save.");
 
+			// Widest label across both row kinds decides where the live-values
+			// readout starts, so every row's readout lines up across every group.
+			float labelReserve = 0.0f;
+			for (int a = 0; a < kAttrCount; ++a)
+			{
+				float w = 0.0f, h = 0.0f;
+				imgui->CalcTextSize(kAttrs[a].label, &w, &h, false, -1.0f);
+				if (w > labelReserve) labelReserve = w;
+			}
+			for (int r = 0; r < kRawCount; ++r)
+			{
+				float w = 0.0f, h = 0.0f;
+				imgui->CalcTextSize(kRaws[r].label, &w, &h, false, -1.0f);
+				if (w > labelReserve) labelReserve = w;
+			}
+			labelReserve += imgui->GetFrameHeight() * 3.0f;   // arrow + max indent depth
+
 			for (int g = 0; g < kTuneGroupCount; ++g)
 			{
 				const TuneGroup& grp = kTuneGroups[g];
@@ -1191,16 +1288,16 @@ namespace BetterCheats::Panels::Movement
 					const TuneRow& row = grp.rows[r];
 					bool* openFlag = (row.openId >= 0) ? &g_rowOpen[row.openId] : nullptr;
 
-					if (row.kind == RowAttr) RenderAttrRow(imgui, row.index, 0, openFlag);
-					else                     RenderRawRow(imgui, row.index, 0, openFlag);
+					if (row.kind == RowAttr) RenderAttrRow(imgui, row.index, labelReserve, 0, openFlag);
+					else                     RenderRawRow(imgui, row.index, labelReserve, 0, openFlag);
 
 					if (!openFlag || !*openFlag)
 						continue;
 
 					for (int k = 0; k < row.kidCount; ++k)
 					{
-						if (row.kids[k].kind == RowAttr) RenderAttrRow(imgui, row.kids[k].index, 1, nullptr);
-						else                             RenderRawRow(imgui, row.kids[k].index, 1, nullptr);
+						if (row.kids[k].kind == RowAttr) RenderAttrRow(imgui, row.kids[k].index, labelReserve, 1, nullptr);
+						else                             RenderRawRow(imgui, row.kids[k].index, labelReserve, 1, nullptr);
 					}
 				}
 
@@ -1361,6 +1458,7 @@ namespace BetterCheats::Panels::Movement
 
 		g_flySpeedMultiplier.store(speed);
 		g_passThroughWalls.store(SessionConfig::Get("playerMovement.passThroughWalls", true));
+		g_showLiveValues.store(SessionConfig::Get("playerMovement.showLiveValues", true));
 
 		EnsureAttrDefaults();
 		EnsureRawDefaults();
@@ -1404,6 +1502,16 @@ namespace BetterCheats::Panels::Movement
 		}
 
 		imgui->TextDisabled("Multipliers apply on top of your base stats and any LEMs or game buffs.");
+
+		bool showLiveValues = g_showLiveValues.load();
+		if (imgui->Checkbox("Show live values", &showLiveValues))
+		{
+			g_showLiveValues.store(showLiveValues);
+			SessionConfig::Set("playerMovement.showLiveValues", showLiveValues);
+		}
+		if (imgui->IsItemHovered())
+			imgui->SetTooltip("Shows the game's own numbers next to each slider, so a change is\n"
+			                  "obvious instead of a guess.");
 
 		imgui->SeparatorText("Fly / No-Clip Movement");
 
@@ -1542,6 +1650,22 @@ namespace BetterCheats::Panels::Movement
 		imgui->Spacing();
 		imgui->TextDisabled("A value differing from the default is applied. Reset a row to turn it off.");
 		imgui->TextDisabled("Rows with an arrow open up the finer controls behind them.");
+
+		if (g_showLiveValues.load())
+		{
+			char walk[32], horiz[32], jumpZ[32], staCur[32], staMax[32];
+			BetterCheats::UI::FormatLiveValue(walk,   sizeof(walk),   g_dbgMaxWalkSpeed.load());
+			BetterCheats::UI::FormatLiveValue(horiz,  sizeof(horiz),  g_dbgHorizSpeed.load());
+			BetterCheats::UI::FormatLiveValue(jumpZ,  sizeof(jumpZ),  g_dbgJumpZVelocity.load());
+			BetterCheats::UI::FormatLiveValue(staCur, sizeof(staCur), g_dbgStaminaCurrent.load());
+			BetterCheats::UI::FormatLiveValue(staMax, sizeof(staMax), g_dbgStaminaMax.load());
+			char line[220];
+			snprintf(line, sizeof(line),
+				"  live: MaxWalkSpeed %s cm/s   horiz speed %s cm/s   JumpZVelocity %s   stamina %s / %s",
+				walk, horiz, jumpZ, staCur, staMax);
+			imgui->TextDisabled(line);
+		}
+
 		RenderTuneGroups(imgui);
 
 		imgui->Spacing();

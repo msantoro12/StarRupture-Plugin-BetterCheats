@@ -4,6 +4,18 @@
 
 namespace BetterCheats
 {
+	float ComposedAttribute::Compute(float gameValue, float amount, Mode mode, float minFinal, float maxFinal)
+	{
+		float final = 0.0f;
+		switch (mode)
+		{
+		case Mode::Multiply: final = gameValue * amount; break;
+		case Mode::Add:      final = gameValue + amount; break;
+		case Mode::Absolute: final = amount;             break;
+		}
+		return std::clamp(final, minFinal, maxFinal);
+	}
+
 	void ComposedAttribute::Apply(const void* owner, SDK::FGameplayAttributeData& attr, float amount,
 	                               Mode mode, float minFinal, float maxFinal)
 	{
@@ -23,14 +35,7 @@ namespace BetterCheats
 			m_game = attr.CurrentValue;
 		}
 
-		float final = 0.0f;
-		switch (mode)
-		{
-		case Mode::Multiply: final = m_game * amount; break;
-		case Mode::Add:      final = m_game + amount; break;
-		case Mode::Absolute: final = amount;           break;
-		}
-		final = std::clamp(final, minFinal, maxFinal);
+		const float final = Compute(m_game, amount, mode, minFinal, maxFinal);
 
 		if (attr.CurrentValue != final)
 			attr.CurrentValue = final;

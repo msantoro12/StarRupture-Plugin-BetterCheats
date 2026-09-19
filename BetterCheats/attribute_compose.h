@@ -14,6 +14,11 @@ namespace BetterCheats
 	public:
 		enum class Mode { Multiply, Add, Absolute };
 
+		// Pure formula: what Apply() would write, given `gameValue` as the game's
+		// own aggregate. Exposed so the "Show live values" readout can compute the
+		// same "expected" figure Apply just used without duplicating the switch.
+		static float Compute(float gameValue, float amount, Mode mode, float minFinal, float maxFinal);
+
 		// `owner` identifies the attribute-set instance the attribute lives on, so a
 		// respawn that reallocates it is detected instead of composing onto a stale
 		// baseline. `amount` is the slider/toggle value; Multiply and Add treat it as
@@ -29,6 +34,16 @@ namespace BetterCheats
 		// Owner gone (respawn, world change) -- drop state, write nothing. The
 		// attribute reference itself may already be dangling, so Forget never touches it.
 		void Forget();
+
+		// Debug-readout accessors for the "Show live values" panels -- same
+		// game-thread-only contract as Apply/Release. GetGame() is the last value
+		// the game held before this composed onto it; GetWritten() is the last
+		// value Apply actually wrote (compare against a fresh CurrentValue read to
+		// see whether the game is still honouring it); IsActive() says whether
+		// either of those means anything right now.
+		float GetGame()    const { return m_game; }
+		float GetWritten() const { return m_written; }
+		bool  IsActive()   const { return m_active; }
 
 	private:
 		const void* m_owner   = nullptr;

@@ -171,6 +171,33 @@ namespace BetterCheats::Panels::Weapons
 		std::atomic<float>    g_dbgReserve   { -1.0f };
 		std::atomic<float>    g_dbgReserveMax{ -1.0f };
 
+		// "Show live values" toggle -- default on so a fresh install proves the
+		// compose fix works without the owner having to find the setting.
+		std::atomic<bool> g_showLiveValues{ true };
+
+		// Au-layer resolved stats on the equipped weapon (UAuWeaponAttributeSet,
+		// inherited by UCrWeaponAttributeSet), refreshed from Tick. -1 = not
+		// available yet, matching g_dbgMag above.
+		std::atomic<float> g_dbgWeaponDamage    { -1.0f };
+		std::atomic<float> g_dbgWeaponFireRate  { -1.0f };
+		std::atomic<float> g_dbgWeaponMaxMagazine{ -1.0f };   // NOT what Magazine Size writes -- see g_dbgMagOffset*
+		std::atomic<float> g_dbgWeaponAccuracy  { -1.0f };
+		std::atomic<float> g_dbgWeaponStability { -1.0f };
+		std::atomic<float> g_dbgWeaponRange     { -1.0f };
+
+		// MaxMagAmmoModOffset -- what the Magazine Size row actually writes.
+		std::atomic<float> g_dbgMagOffsetCurrent{ 0.0f };
+		std::atomic<float> g_dbgMagOffsetBase   { 0.0f };
+
+		// Per-row "expected = game" / "expected != game" readout, indexed like
+		// kAttrs/g_composed. `game` is CurrentValue read fresh at the start of this
+		// tick, before we touch it; `expected` is what we intend it to be (the
+		// composed result while active, or `game` itself while inactive). Compared
+		// pre-write so a lasting mismatch actually means something. Refreshed from
+		// Tick, read from RenderImGui.
+		std::atomic<float> g_dbgAttrGame[kAttrCount];
+		std::atomic<float> g_dbgAttrExpected[kAttrCount];
+
 		// Reserve ammo is an inventory item, not an attribute, so an empty inventory
 		// blocks reload whatever is written to attributes. Tops up only on an observed
 		// decrease: a stale read can miss a top-up, never repeat one.
@@ -557,6 +584,15 @@ namespace BetterCheats::Panels::Weapons
 				{
 					SDK::FGameplayAttributeData& attr = weapons->*kAttrs[a].member;
 
+					// Captured before we touch anything: "game" for the readout, and
+					// (when this row was already active going into this tick) the
+					// basis for "expected" -- what our last write should still read
+					// back as if nothing has overridden it since.
+					const float gameBefore    = attr.CurrentValue;
+					const bool  wasActive     = g_composed[a].IsActive();
+					const float previousWrite = g_composed[a].GetWritten();
+
+					bool active = true;
 					if (a == kAttrDamage && profile.oneHitKill)
 					{
 						// Absolute wins outright; Release() hands Damage back to the
@@ -564,15 +600,37 @@ namespace BetterCheats::Panels::Weapons
 						g_composed[a].Apply(weapons, attr, kOneHitKillDamage,
 							BetterCheats::ComposedAttribute::Mode::Absolute,
 							kOneHitKillDamage, kOneHitKillDamage);
-						continue;
 					}
-
-					if (IsActive(a, profile.values[a]))
+					else if (IsActive(a, profile.values[a]))
+					{
 						g_composed[a].Apply(weapons, attr, profile.values[a], kAttrModes[a],
 							kAttrs[a].minValue, kAttrs[a].maxValue);
+					}
 					else
+					{
+						active = false;
 						g_composed[a].Release(weapons, attr);
+					}
+
+					// On the very first activation frame there is no previous write to
+					// compare against yet -- expected is trivially "game" until next tick.
+					const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+					g_dbgAttrGame[a].store(gameBefore);
+					g_dbgAttrExpected[a].store(expected);
 				}
+
+				// Live-values readout: the Au-layer resolved stats (WeaponDamage etc.)
+				// are inherited members on the same UCrWeaponAttributeSet, and the raw
+				// MaxMagAmmoModOffset base/current -- see g_dbgWeaponMaxMagazine's
+				// comment for why this differs from Magazine Size's effect on the clip.
+				g_dbgWeaponDamage.store(weapons->WeaponDamage.CurrentValue);
+				g_dbgWeaponFireRate.store(weapons->FireRate.CurrentValue);
+				g_dbgWeaponMaxMagazine.store(weapons->MaxMagazine.CurrentValue);
+				g_dbgWeaponAccuracy.store(weapons->Accuracy.CurrentValue);
+				g_dbgWeaponStability.store(weapons->Stability.CurrentValue);
+				g_dbgWeaponRange.store(weapons->Range.CurrentValue);
+				g_dbgMagOffsetCurrent.store(weapons->MaxMagAmmoModOffset.CurrentValue);
+				g_dbgMagOffsetBase.store(weapons->MaxMagAmmoModOffset.BaseValue);
 			}
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
@@ -676,6 +734,7 @@ namespace BetterCheats::Panels::Weapons
 		g_autoRestock.store(SessionConfig::Get("playerWeapons.autoRestock", false));
 		g_restockHidden.store(SessionConfig::Get("playerWeapons.restockHidden", true));
 		g_restockMags.store(SessionConfig::Get("playerWeapons.restockMags", 3.0f));
+		g_showLiveValues.store(SessionConfig::Get("playerWeapons.showLiveValues", true));
 
 		g_configApplied = true;
 
@@ -691,6 +750,16 @@ namespace BetterCheats::Panels::Weapons
 		}
 
 		imgui->TextDisabled("Multipliers apply on top of the weapon's base stats and any attachments.");
+
+		bool showLiveValues = g_showLiveValues.load();
+		if (imgui->Checkbox("Show live values", &showLiveValues))
+		{
+			g_showLiveValues.store(showLiveValues);
+			SessionConfig::Set("playerWeapons.showLiveValues", showLiveValues);
+		}
+		if (imgui->IsItemHovered())
+			imgui->SetTooltip("Shows the game's own numbers next to each slider, so a change is\n"
+			                  "obvious instead of a guess.");
 
 		imgui->SeparatorText("Ammo");
 
@@ -766,10 +835,51 @@ namespace BetterCheats::Panels::Weapons
 			imgui->TextDisabled(line);
 		}
 
+		// Live values: the three numbers that settle the Magazine Size question --
+		// does GetEquippedWeaponMaxMagazineAmmo() (the clip size above) track the
+		// offset we write, or the untouched Au-layer MaxMagazine? Whichever one
+		// moves with the slider is the one that's actually live.
+		if (g_showLiveValues.load() && dbgMagMax >= 0.0f)
+		{
+			char dmg[32], rate[32], mag[32], acc[32], stab[32], range[32];
+			BetterCheats::UI::FormatLiveValue(dmg,   sizeof(dmg),   g_dbgWeaponDamage.load());
+			BetterCheats::UI::FormatLiveValue(rate,  sizeof(rate),  g_dbgWeaponFireRate.load());
+			BetterCheats::UI::FormatLiveValue(mag,   sizeof(mag),   g_dbgWeaponMaxMagazine.load());
+			BetterCheats::UI::FormatLiveValue(acc,   sizeof(acc),   g_dbgWeaponAccuracy.load());
+			BetterCheats::UI::FormatLiveValue(stab,  sizeof(stab),  g_dbgWeaponStability.load());
+			BetterCheats::UI::FormatLiveValue(range, sizeof(range), g_dbgWeaponRange.load());
+			char line1[220];
+			snprintf(line1, sizeof(line1),
+				"  live (Au-layer): dmg %s  rate %s  mag %s  acc %s  stab %s  range %s",
+				dmg, rate, mag, acc, stab, range);
+			imgui->TextDisabled(line1);
+
+			char offCur[32], offBase[32], getter[32];
+			BetterCheats::UI::FormatLiveValue(offCur,  sizeof(offCur),  g_dbgMagOffsetCurrent.load());
+			BetterCheats::UI::FormatLiveValue(offBase, sizeof(offBase), g_dbgMagOffsetBase.load());
+			BetterCheats::UI::FormatLiveValue(getter,  sizeof(getter),  dbgMagMax);
+			char line2[220];
+			snprintf(line2, sizeof(line2),
+				"  magazine offset: current %s / base %s    clip getter returned %s",
+				offCur, offBase, getter);
+			imgui->TextDisabled(line2);
+		}
+
 		imgui->Spacing();
 		imgui->SeparatorText("Per-Weapon");
 		imgui->TextDisabled("A value differing from the default is applied. Reset a row to turn it off.");
 		imgui->Spacing();
+
+		// Widest attribute label decides where the live-values readout starts, so
+		// every row's readout lines up regardless of that row's own label length.
+		float labelReserve = 0.0f;
+		for (int a = 0; a < kAttrCount; ++a)
+		{
+			float w = 0.0f, h = 0.0f;
+			imgui->CalcTextSize(kAttrs[a].label, &w, &h, false, -1.0f);
+			if (w > labelReserve) labelReserve = w;
+		}
+		labelReserve += imgui->GetFrameHeight();
 
 		bool profilesEmpty = false;
 		{
@@ -913,6 +1023,12 @@ namespace BetterCheats::Panels::Weapons
 					else        imgui->TextDisabled(def.label);
 					if (def.tooltip && imgui->IsItemHovered())
 						imgui->SetTooltip(def.tooltip);
+
+					if (g_showLiveValues.load())
+					{
+						imgui->SameLine(labelReserve, 0.0f);
+						BetterCheats::UI::RenderLiveValue(imgui, g_dbgAttrExpected[a].load(), g_dbgAttrGame[a].load());
+					}
 
 					// Slider for feel, typed box on the right for precision. Zero spacing
 					// between them so they read as one joined control.
