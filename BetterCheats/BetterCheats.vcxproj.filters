@@ -94,6 +94,9 @@
     <ClInclude Include="cheat_math.h">
       <Filter>Plugin Core\Helpers</Filter>
     </ClInclude>
+    <ClInclude Include="game_thread.h">
+      <Filter>Plugin Core\Helpers</Filter>
+    </ClInclude>
     <ClInclude Include="player_lookup.h">
       <Filter>Plugin Core\Helpers</Filter>
     </ClInclude>

@@ -9,6 +9,7 @@
 #include "attribute_compose.h"
 #include "cheat_math.h"
 #include "player_lookup.h"
+#include "game_thread.h"
 
 #include "Chimera_classes.hpp"
 
@@ -478,16 +479,27 @@ namespace BetterCheats::Panels::Movement
 		template <typename Set>
 		void ApplyAttrRow(Set* set, SDK::FGameplayAttributeData& attr, int attrIndex)
 		{
-			const float gameBefore    = attr.CurrentValue;
 			const bool  wasActive     = g_composedAttrs[attrIndex].IsActive();
 			const float previousWrite = g_composedAttrs[attrIndex].GetWritten();
+			const std::string key = std::string("playerMovement.compose.") + kAttrs[attrIndex].key;
+			if (!wasActive)
+				BetterCheats::RestoreIfStale(key, attr.CurrentValue);
+			const float gameBefore = attr.CurrentValue;
 
 			bool active = IsAttrActive(attrIndex);
 			if (active)
-				g_composedAttrs[attrIndex].Apply(set, attr, SafeAttrValue(attrIndex), kAttrModes[attrIndex],
+				g_composedAttrs[attrIndex].Apply(set, attr.CurrentValue, SafeAttrValue(attrIndex), kAttrModes[attrIndex],
 					kAttrs[attrIndex].minValue, kAttrs[attrIndex].maxValue);
 			else
-				g_composedAttrs[attrIndex].Release(set, attr);
+				g_composedAttrs[attrIndex].Release(set, attr.CurrentValue);
+
+			// Recaptured (first activation, or the game re-aggregated) -- persist so
+			// a botched hot-reload can tell this from a stale leftover next time.
+			// Never every frame.
+			if (active && (!wasActive || gameBefore != previousWrite))
+				BetterCheats::SaveComposeState(key, g_composedAttrs[attrIndex].GetGame(), g_composedAttrs[attrIndex].GetWritten());
+			else if (!active)
+				BetterCheats::ClearComposeState(key);
 
 			const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
 			// "Buffed" (base + LEMs/buffs, ours excluded): GetGame() reflects what
@@ -800,16 +812,24 @@ namespace BetterCheats::Panels::Movement
 			// already compare before writing.
 			if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
 			{
-				const float gameBefore    = energy->MaxEnergy.CurrentValue;
+				constexpr const char* kMaxEnergyKey = "playerMovement.compose.maxEnergy";
 				const bool  wasActive     = g_composedMaxEnergy.IsActive();
 				const float previousWrite = g_composedMaxEnergy.GetWritten();
-				const bool  active        = IsRawActive(kRawMaxEnergy);
+				if (!wasActive)
+					BetterCheats::RestoreIfStale(kMaxEnergyKey, energy->MaxEnergy.CurrentValue);
+				const float gameBefore = energy->MaxEnergy.CurrentValue;
+				const bool  active     = IsRawActive(kRawMaxEnergy);
 
 				if (active)
-					g_composedMaxEnergy.Apply(energy, energy->MaxEnergy, SafeMultiplier(kRawMaxEnergy),
+					g_composedMaxEnergy.Apply(energy, energy->MaxEnergy.CurrentValue, SafeMultiplier(kRawMaxEnergy),
 						BetterCheats::ComposedAttribute::Mode::Multiply, kMaxEnergyFloor, kMaxEnergyCeiling);
 				else
-					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
+					g_composedMaxEnergy.Release(energy, energy->MaxEnergy.CurrentValue);
+
+				if (active && (!wasActive || gameBefore != previousWrite))
+					BetterCheats::SaveComposeState(kMaxEnergyKey, g_composedMaxEnergy.GetGame(), g_composedMaxEnergy.GetWritten());
+				else if (!active)
+					BetterCheats::ClearComposeState(kMaxEnergyKey);
 
 				const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
 				const float buffed   = active ? g_composedMaxEnergy.GetGame() : gameBefore;
@@ -861,7 +881,10 @@ namespace BetterCheats::Panels::Movement
 				// No baseline to write back -- hand CurrentValue to whatever the game
 				// currently has (see g_composedMaxEnergy).
 				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
+				{
+					g_composedMaxEnergy.Release(energy, energy->MaxEnergy.CurrentValue);
+					BetterCheats::ClearComposeState("playerMovement.compose.maxEnergy");
+				}
 			}
 			else if (raw == kRawRegenDelay)
 			{
@@ -1262,6 +1285,23 @@ namespace BetterCheats::Panels::Movement
 				self->hooks->Input->UnregisterKeybindByName(combo, EModKeyEvent::Pressed, &OnNoClipKeyPressed);
 		}
 
+		// The loader's own RELOAD button runs PluginShutdown from its D3D Present
+		// hook, not the game thread Tick() recorded -- GetLocalCharacter() and
+		// every UObject touch below intermittently crash there (see player_lookup.h
+		// and reviews/weapon-stats-and-reload.md Q3). Forget instead of Release:
+		// SessionConfig still has whatever RestoreIfStale needs to undo a leftover
+		// write on the next activation, off-thread or not.
+		if (!BetterCheats::IsGameThread())
+		{
+			for (int a = 0; a < kAttrCount; ++a)
+				g_composedAttrs[a].Forget();
+			g_composedMaxEnergy.Forget();
+			g_active    = false;
+			g_appliedTo = nullptr;
+			g_noClipWanted.store(false);
+			return;
+		}
+
 		// Leaving a character permanently non-colliding would outlive the plugin,
 		// so put it back — but only if the pawn we changed is still the live one.
 		try
@@ -1278,18 +1318,30 @@ namespace BetterCheats::Panels::Movement
 			{
 				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
 					for (const MoveBinding& b : kMoveBindings)
-						g_composedAttrs[b.attr].Release(set, set->*b.member);
+					{
+						g_composedAttrs[b.attr].Release(set, (set->*b.member).CurrentValue);
+						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
+					}
 
 				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
 					for (const SpeedBinding& b : kSpeedBindings)
-						g_composedAttrs[b.attr].Release(set, set->*b.member);
+					{
+						g_composedAttrs[b.attr].Release(set, (set->*b.member).CurrentValue);
+						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
+					}
 
 				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
 					for (const GemBinding& b : kGemBindings)
-						g_composedAttrs[b.attr].Release(set, set->*b.member);
+					{
+						g_composedAttrs[b.attr].Release(set, (set->*b.member).CurrentValue);
+						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
+					}
 
 				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
-					g_composedMaxEnergy.Release(energy, energy->MaxEnergy);
+				{
+					g_composedMaxEnergy.Release(energy, energy->MaxEnergy.CurrentValue);
+					BetterCheats::ClearComposeState("playerMovement.compose.maxEnergy");
+				}
 			}
 			else
 			{
@@ -1307,6 +1359,8 @@ namespace BetterCheats::Panels::Movement
 
 	void Tick(float /*deltaSeconds*/)
 	{
+		BetterCheats::RecordGameThread();
+
 		EnsureAttrDefaults();
 		EnsureRawDefaults();
 

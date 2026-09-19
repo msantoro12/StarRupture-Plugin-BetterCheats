@@ -6,6 +6,7 @@
 #include "attribute_compose.h"
 #include "cheat_math.h"
 #include "player_lookup.h"
+#include "game_thread.h"
 
 #include "Chimera_classes.hpp"
 
@@ -65,8 +66,13 @@ namespace BetterCheats::Panels::Weapons
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Multiplies rounds per second, attachment bonuses included." },
 			{ "Reload Speed",       "reload",   &SDK::UCrWeaponAttributeSet::ReloadSpeedModMultiplier,
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Higher is faster. Multiplies on top of any attachment bonus." },
+			// .member unused: Tick() special-cases this row onto the weapon data
+			// asset's BaseMagazine.Value instead (g_composedMagazine) -- the clip-size
+			// getter never reads MaxMagAmmoModOffset at all, see
+			// reviews/weapon-stats-and-reload.md Q2. Kept here only so every row still
+			// has a valid member pointer for this table's shape.
 			{ "Magazine Size",      "magazine", &SDK::UCrWeaponAttributeSet::MaxMagAmmoModOffset,
-			  0.0f, -100.0f, 999.0f, 1.0f, "%.0f", "Flat OFFSET added to this weapon's magazine, on top of any\nattachment's own offset. Negative shrinks it." },
+			  0.0f, -100.0f, 999.0f, 1.0f, "%.0f", "Flat OFFSET added to this weapon's magazine (its real base\ncapacity, not an attachment-style modifier). Negative shrinks it." },
 			{ "Damage Falloff",     "falloff",  &SDK::UCrWeaponAttributeSet::DamageFallOffModMultiplier,
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Effective range before damage drops off. Multiplies on top of\nany attachment bonus." },
 			{ "Recoil",             "recoil",   &SDK::UCrWeaponAttributeSet::RecoilModMultiplier,
@@ -183,19 +189,19 @@ namespace BetterCheats::Panels::Weapons
 		std::atomic<bool> g_loggedTickFill{ false };
 		std::atomic<bool> g_loggedRender{ false };
 
-		// Au-layer resolved stats on the equipped weapon (UAuWeaponAttributeSet,
-		// inherited by UCrWeaponAttributeSet), refreshed from Tick. -1 = not
-		// available yet, matching g_dbgMag above.
-		std::atomic<float> g_dbgWeaponDamage    { -1.0f };
-		std::atomic<float> g_dbgWeaponFireRate  { -1.0f };
-		std::atomic<float> g_dbgWeaponMaxMagazine{ -1.0f };   // NOT what Magazine Size writes -- see g_dbgMagOffset*
-		std::atomic<float> g_dbgWeaponAccuracy  { -1.0f };
-		std::atomic<float> g_dbgWeaponStability { -1.0f };
-		std::atomic<float> g_dbgWeaponRange     { -1.0f };
-
-		// MaxMagAmmoModOffset -- what the Magazine Size row actually writes.
-		std::atomic<float> g_dbgMagOffsetCurrent{ 0.0f };
-		std::atomic<float> g_dbgMagOffsetBase   { 0.0f };
+		// The equipped weapon's real base stats, read from its data asset CDO
+		// (LastEquippedWeaponData) -- the inherited Au-layer fields on
+		// UCrWeaponAttributeSet (WeaponDamage, FireRate, ...) that a previous build
+		// showed here are never written by the game at all (confirmed permanently
+		// zero; see reviews/weapon-stats-and-reload.md Q1), a dead parallel layer,
+		// not a bug in how they were read. -1 = not available yet, matching
+		// g_dbgMag above. g_dbgWeaponBaseMagazine is the CAPTURED ORIGINAL (via
+		// g_composedMagazine), not a live read, since Magazine Size writes through
+		// this same field -- a live read while active would show our own offset.
+		std::atomic<float> g_dbgWeaponBaseDamage       { -1.0f };
+		std::atomic<float> g_dbgWeaponRoundsPerMinute  { -1.0f };
+		std::atomic<float> g_dbgWeaponBaseMagazine     { -1.0f };
+		std::atomic<float> g_dbgWeaponBaseRange        { -1.0f };
 
 		// Per-row "expected = game" / "expected != game" readout, indexed like
 		// kAttrs/g_composed. `game` is CurrentValue read fresh at the start of this
@@ -368,15 +374,52 @@ namespace BetterCheats::Panels::Weapons
 		BetterCheats::ComposedAttribute g_composed[kAttrCount];
 		SDK::UCrWeaponAttributeSet*     g_composedOwner = nullptr;
 
+		// Magazine Size composes separately from the other nine rows: the clip-size
+		// getter reads LastEquippedWeaponData->BaseMagazine.Value directly (a plain
+		// FScalableFloat.Value on the weapon TYPE's data asset CDO), not the GAS
+		// MaxMagAmmoModOffset this row used to write -- see
+		// reviews/weapon-stats-and-reload.md Q2. A magazine size can't sensibly go
+		// to zero or negative, or run away unbounded if something stacks badly, so
+		// it gets its own sanity clamp instead of the row's own -100..999 slider
+		// range (that range bounds the OFFSET the slider picks, not the result).
+		constexpr float kMagazineFloor   = 1.0f;
+		constexpr float kMagazineCeiling = 9999.0f;
+		BetterCheats::ComposedAttribute g_composedMagazine;
+		SDK::UCrWeaponItemDataBase*     g_magazineOwner = nullptr;
+
 		// Forgets every composed slot the moment the attribute set instance changes
 		// (respawn, world change) -- before anything below tries to Apply/Release
-		// against what may already be gone.
+		// against what may already be gone. Also drops the magazine slot: unlike
+		// `weapons`, its owner is a per-weapon-TYPE data asset, not the character,
+		// but a respawn is exactly the kind of "can't trust what we think we own
+		// any more" event that should forget it too rather than try to Release()
+		// against a data asset we can no longer be sure is still valid.
 		void ForgetComposedIfOwnerChanged(SDK::UCrWeaponAttributeSet* current)
 		{
 			if (current == g_composedOwner) return;
 			for (int a = 0; a < kAttrCount; ++a)
 				g_composed[a].Forget();
 			g_composedOwner = current;
+
+			g_composedMagazine.Forget();
+			g_magazineOwner = nullptr;
+		}
+
+		// Unlike `weapons` (one shared instance regardless of what's equipped),
+		// LastEquippedWeaponData is a different CDO per weapon TYPE -- switching
+		// weapons must restore the PREVIOUS one's magazine before adopting the new
+		// one's, or the old weapon stays offset forever (ComposedAttribute's own
+		// owner-change handling only ever recaptures on the new owner, it never
+		// writes back to an owner it's leaving).
+		void ReleaseMagazineIfOwnerChanged(SDK::UCrWeaponItemDataBase* current)
+		{
+			if (current == g_magazineOwner) return;
+			if (g_magazineOwner)
+			{
+				g_composedMagazine.Release(g_magazineOwner, g_magazineOwner->BaseMagazine.Value);
+				BetterCheats::ClearComposeState("playerWeapons.compose.magazine");
+			}
+			g_magazineOwner = current;
 		}
 
 		bool IsActive(int attr, float value)
@@ -522,6 +565,8 @@ namespace BetterCheats::Panels::Weapons
 
 	void Tick(float deltaSeconds)
 	{
+		BetterCheats::RecordGameThread();
+
 		// ApplySavedConfig() is driven by save load, which a hot-reloaded plugin has
 		// already missed. plugin.cpp does call OnExperienceLoadComplete() on reload, but
 		// from PluginInit's thread -- and SessionConfig::Reload() resolves the save name
@@ -589,35 +634,49 @@ namespace BetterCheats::Panels::Weapons
 			{
 				for (int a = 0; a < kAttrCount; ++a)
 				{
+					if (a == kAttrMagazine)
+						continue;   // composes onto the weapon data asset instead -- see below
+
 					SDK::FGameplayAttributeData& attr = weapons->*kAttrs[a].member;
+					const std::string key = std::string("playerWeapons.compose.") + kAttrs[a].key;
 
 					// Captured before we touch anything: "game" for the readout, and
 					// (when this row was already active going into this tick) the
 					// basis for "expected" -- what our last write should still read
 					// back as if nothing has overridden it since.
-					const float gameBefore    = attr.CurrentValue;
 					const bool  wasActive     = g_composed[a].IsActive();
 					const float previousWrite = g_composed[a].GetWritten();
+					if (!wasActive)
+						BetterCheats::RestoreIfStale(key, attr.CurrentValue);
+					const float gameBefore = attr.CurrentValue;
 
 					bool active = true;
 					if (a == kAttrDamage && profile.oneHitKill)
 					{
 						// Absolute wins outright; Release() hands Damage back to the
 						// game's own aggregate once this turns off.
-						g_composed[a].Apply(weapons, attr, kOneHitKillDamage,
+						g_composed[a].Apply(weapons, attr.CurrentValue, kOneHitKillDamage,
 							BetterCheats::ComposedAttribute::Mode::Absolute,
 							kOneHitKillDamage, kOneHitKillDamage);
 					}
 					else if (IsActive(a, profile.values[a]))
 					{
-						g_composed[a].Apply(weapons, attr, profile.values[a], kAttrModes[a],
+						g_composed[a].Apply(weapons, attr.CurrentValue, profile.values[a], kAttrModes[a],
 							kAttrs[a].minValue, kAttrs[a].maxValue);
 					}
 					else
 					{
 						active = false;
-						g_composed[a].Release(weapons, attr);
+						g_composed[a].Release(weapons, attr.CurrentValue);
 					}
+
+					// Recaptured (first activation, or the game re-aggregated) --
+					// persist so a botched hot-reload can tell this from a stale
+					// leftover next time. Never every frame.
+					if (active && (!wasActive || gameBefore != previousWrite))
+						BetterCheats::SaveComposeState(key, g_composed[a].GetGame(), g_composed[a].GetWritten());
+					else if (!active)
+						BetterCheats::ClearComposeState(key);
 
 					// On the very first activation frame there is no previous write to
 					// compare against yet -- expected is trivially "game" until next tick.
@@ -635,19 +694,54 @@ namespace BetterCheats::Panels::Weapons
 
 				if (!g_loggedTickFill.exchange(true))
 					LOG_INFO("Weapons: live values first filled by Tick (weapon '%s').", profile.display.c_str());
+			}
 
-				// Live-values readout: the Au-layer resolved stats (WeaponDamage etc.)
-				// are inherited members on the same UCrWeaponAttributeSet, and the raw
-				// MaxMagAmmoModOffset base/current -- see g_dbgWeaponMaxMagazine's
-				// comment for why this differs from Magazine Size's effect on the clip.
-				g_dbgWeaponDamage.store(weapons->WeaponDamage.CurrentValue);
-				g_dbgWeaponFireRate.store(weapons->FireRate.CurrentValue);
-				g_dbgWeaponMaxMagazine.store(weapons->MaxMagazine.CurrentValue);
-				g_dbgWeaponAccuracy.store(weapons->Accuracy.CurrentValue);
-				g_dbgWeaponStability.store(weapons->Stability.CurrentValue);
-				g_dbgWeaponRange.store(weapons->Range.CurrentValue);
-				g_dbgMagOffsetCurrent.store(weapons->MaxMagAmmoModOffset.CurrentValue);
-				g_dbgMagOffsetBase.store(weapons->MaxMagAmmoModOffset.BaseValue);
+			// Magazine Size: composes (Add) onto LastEquippedWeaponData->BaseMagazine
+			// .Value, the weapon TYPE's own data asset field the clip-size getter
+			// actually reads (reviews/weapon-stats-and-reload.md Q2) -- not a GAS
+			// attribute, so it's outside the `weapons`-gated loop above and keyed by
+			// the data asset, not the character.
+			SDK::UCrWeaponItemDataBase* equippedData = character->WeaponSystem->LastEquippedWeaponData;
+			ReleaseMagazineIfOwnerChanged(equippedData);
+
+			if (equippedData)
+			{
+				constexpr const char* kMagazineKey = "playerWeapons.compose.magazine";
+				const bool  wasActive     = g_composedMagazine.IsActive();
+				const float previousWrite = g_composedMagazine.GetWritten();
+				if (!wasActive)
+					BetterCheats::RestoreIfStale(kMagazineKey, equippedData->BaseMagazine.Value);
+				const float gameBefore = equippedData->BaseMagazine.Value;
+
+				bool active = false;
+				if (IsActive(kAttrMagazine, profile.values[kAttrMagazine]))
+				{
+					active = true;
+					g_composedMagazine.Apply(equippedData, equippedData->BaseMagazine.Value,
+						profile.values[kAttrMagazine], BetterCheats::ComposedAttribute::Mode::Add,
+						kMagazineFloor, kMagazineCeiling);
+				}
+				else
+				{
+					g_composedMagazine.Release(equippedData, equippedData->BaseMagazine.Value);
+				}
+
+				if (active && (!wasActive || gameBefore != previousWrite))
+					BetterCheats::SaveComposeState(kMagazineKey, g_composedMagazine.GetGame(), g_composedMagazine.GetWritten());
+				else if (!active)
+					BetterCheats::ClearComposeState(kMagazineKey);
+
+				const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+				g_dbgAttrGame[kAttrMagazine].store(gameBefore);
+				g_dbgAttrExpected[kAttrMagazine].store(expected);
+
+				// Weapon base stats -- real CDO fields the game itself uses, never
+				// written by us except BaseMagazine, so show the ORIGINAL we captured
+				// rather than a live read that would show our own offset while active.
+				g_dbgWeaponBaseDamage.store(equippedData->BaseDamage.Value);
+				g_dbgWeaponRoundsPerMinute.store(equippedData->RoundsPerMinute.Value);
+				g_dbgWeaponBaseRange.store(equippedData->BaseRange.Value);
+				g_dbgWeaponBaseMagazine.store(active ? g_composedMagazine.GetGame() : gameBefore);
 			}
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
@@ -680,6 +774,20 @@ namespace BetterCheats::Panels::Weapons
 
 	void Shutdown()
 	{
+		// The loader's own RELOAD button runs PluginShutdown from its D3D Present
+		// hook, not the game thread Tick() recorded -- GetLocalCharacter() and
+		// every UObject touch below intermittently crash there (see player_lookup.h
+		// and reviews/weapon-stats-and-reload.md Q3). Forget instead of Release:
+		// SessionConfig still has whatever RestoreIfStale needs to undo a leftover
+		// write on the next activation, off-thread or not.
+		if (!BetterCheats::IsGameThread())
+		{
+			for (int a = 0; a < kAttrCount; ++a)
+				g_composed[a].Forget();
+			g_composedMagazine.Forget();
+			return;
+		}
+
 		// Same character the composed state was captured against -- safe to hand
 		// CurrentValue back. A different or null character means the attribute set
 		// this state refers to is already gone; ForgetComposedIfOwnerChanged would
@@ -692,12 +800,26 @@ namespace BetterCheats::Panels::Weapons
 			if (weapons && weapons == g_composedOwner)
 			{
 				for (int a = 0; a < kAttrCount; ++a)
-					g_composed[a].Release(weapons, weapons->*kAttrs[a].member);
+				{
+					if (a == kAttrMagazine) continue;
+					g_composed[a].Release(weapons, (weapons->*kAttrs[a].member).CurrentValue);
+					BetterCheats::ClearComposeState(std::string("playerWeapons.compose.") + kAttrs[a].key);
+				}
 			}
 			else
 			{
 				for (int a = 0; a < kAttrCount; ++a)
 					g_composed[a].Forget();
+			}
+
+			if (g_magazineOwner)
+			{
+				g_composedMagazine.Release(g_magazineOwner, g_magazineOwner->BaseMagazine.Value);
+				BetterCheats::ClearComposeState("playerWeapons.compose.magazine");
+			}
+			else
+			{
+				g_composedMagazine.Forget();
 			}
 		}
 		catch (...) {}
@@ -859,34 +981,23 @@ namespace BetterCheats::Panels::Weapons
 			imgui->TextDisabled(line);
 		}
 
-		// Live values: the three numbers that settle the Magazine Size question --
-		// does GetEquippedWeaponMaxMagazineAmmo() (the clip size above) track the
-		// offset we write, or the untouched Au-layer MaxMagazine? Whichever one
-		// moves with the slider is the one that's actually live.
+		// The equipped weapon's real base stats, from its data asset -- not the
+		// inherited Au-layer attribute fields a previous build showed here, which
+		// the game never writes at all (confirmed permanently zero; see
+		// reviews/weapon-stats-and-reload.md Q1). Magazine shows the CAPTURED
+		// ORIGINAL, so it reads the same whether or not Magazine Size is active.
 		if (g_showLiveValues.load() && dbgMagMax >= 0.0f)
 		{
-			char dmg[32], rate[32], mag[32], acc[32], stab[32], range[32];
-			BetterCheats::UI::FormatLiveValue(dmg,   sizeof(dmg),   g_dbgWeaponDamage.load());
-			BetterCheats::UI::FormatLiveValue(rate,  sizeof(rate),  g_dbgWeaponFireRate.load());
-			BetterCheats::UI::FormatLiveValue(mag,   sizeof(mag),   g_dbgWeaponMaxMagazine.load());
-			BetterCheats::UI::FormatLiveValue(acc,   sizeof(acc),   g_dbgWeaponAccuracy.load());
-			BetterCheats::UI::FormatLiveValue(stab,  sizeof(stab),  g_dbgWeaponStability.load());
-			BetterCheats::UI::FormatLiveValue(range, sizeof(range), g_dbgWeaponRange.load());
-			char line1[220];
-			snprintf(line1, sizeof(line1),
-				"  live (Au-layer): dmg %s  rate %s  mag %s  acc %s  stab %s  range %s",
-				dmg, rate, mag, acc, stab, range);
-			imgui->TextDisabled(line1);
-
-			char offCur[32], offBase[32], getter[32];
-			BetterCheats::UI::FormatLiveValue(offCur,  sizeof(offCur),  g_dbgMagOffsetCurrent.load());
-			BetterCheats::UI::FormatLiveValue(offBase, sizeof(offBase), g_dbgMagOffsetBase.load());
-			BetterCheats::UI::FormatLiveValue(getter,  sizeof(getter),  dbgMagMax);
-			char line2[220];
-			snprintf(line2, sizeof(line2),
-				"  magazine offset: current %s / base %s    clip getter returned %s",
-				offCur, offBase, getter);
-			imgui->TextDisabled(line2);
+			char dmg[32], rpm[32], mag[32], range[32];
+			BetterCheats::UI::FormatLiveValue(dmg,   sizeof(dmg),   g_dbgWeaponBaseDamage.load());
+			BetterCheats::UI::FormatLiveValue(rpm,   sizeof(rpm),   g_dbgWeaponRoundsPerMinute.load());
+			BetterCheats::UI::FormatLiveValue(mag,   sizeof(mag),   g_dbgWeaponBaseMagazine.load());
+			BetterCheats::UI::FormatLiveValue(range, sizeof(range), g_dbgWeaponBaseRange.load());
+			char line[220];
+			snprintf(line, sizeof(line),
+				"  weapon base: dmg %s  rounds/min %s  mag %s  range %s",
+				dmg, rpm, mag, range);
+			imgui->TextDisabled(line);
 		}
 
 		imgui->Spacing();
@@ -1063,9 +1174,13 @@ namespace BetterCheats::Panels::Weapons
 					spec.expected      = g_dbgAttrExpected[a].load();
 					spec.game          = g_dbgAttrGame[a].load();
 					spec.composing     = IsActive(a, value) || ownedByOneHitKill;
-					spec.hasBase       = true;
+					// Magazine composes onto the weapon data asset now, not a GAS
+					// attribute -- no BaseValue split, so no tag; "Unmodified" is the
+					// captured original (g_dbgWeaponBaseMagazine, same number the base-
+					// stats block above shows).
+					spec.hasBase       = (a != kAttrMagazine);
 					spec.base          = g_dbgAttrBase[a].load();
-					spec.unmodified    = g_dbgAttrBuffed[a].load();
+					spec.unmodified    = (a == kAttrMagazine) ? g_dbgWeaponBaseMagazine.load() : g_dbgAttrBuffed[a].load();
 					spec.changeDesc    = changeDesc;
 					spec.tagWord       = "mods";
 					spec.baseLabel     = "Base (no attachments)";
