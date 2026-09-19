@@ -3,6 +3,7 @@
 #include "session_config.h"
 #include "aob_resolver.h"
 #include "ui_widgets.h"
+#include "attribute_compose.h"
 
 #include "Chimera_classes.hpp"
 
@@ -57,25 +58,42 @@ namespace BetterCheats::Panels::Weapons
 
 		const AttrDef kAttrs[kAttrCount] = {
 			{ "Damage",             "damage",   &SDK::UCrWeaponAttributeSet::DamageModMultiplier,
-			  1.0f, 0.10f,  25.0f, 0.05f, "%.2fx", "Multiplies outgoing weapon damage." },
+			  1.0f, 0.10f,  25.0f, 0.05f, "%.2fx", "Multiplies outgoing weapon damage, attachment bonuses included." },
 			{ "Fire Rate",          "fireRate", &SDK::UCrWeaponAttributeSet::FireRateModMultiplier,
-			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Multiplies rounds per second." },
+			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Multiplies rounds per second, attachment bonuses included." },
 			{ "Reload Speed",       "reload",   &SDK::UCrWeaponAttributeSet::ReloadSpeedModMultiplier,
-			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Higher is faster." },
+			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Higher is faster. Multiplies on top of any attachment bonus." },
 			{ "Magazine Size",      "magazine", &SDK::UCrWeaponAttributeSet::MaxMagAmmoModOffset,
-			  0.0f, -100.0f, 999.0f, 1.0f, "%.0f", "Flat OFFSET added to this weapon's magazine. Negative shrinks it." },
+			  0.0f, -100.0f, 999.0f, 1.0f, "%.0f", "Flat OFFSET added to this weapon's magazine, on top of any\nattachment's own offset. Negative shrinks it." },
 			{ "Damage Falloff",     "falloff",  &SDK::UCrWeaponAttributeSet::DamageFallOffModMultiplier,
-			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Effective range before damage drops off." },
+			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Effective range before damage drops off. Multiplies on top of\nany attachment bonus." },
 			{ "Recoil",             "recoil",   &SDK::UCrWeaponAttributeSet::RecoilModMultiplier,
-			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "0 removes recoil entirely." },
+			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "0 removes recoil entirely. Multiplies on top of any attachment bonus." },
 			{ "Spread",             "spread",   &SDK::UCrWeaponAttributeSet::SpreadModMultiplier,
-			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "0 is perfect accuracy." },
+			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "0 is perfect accuracy. Multiplies on top of any attachment bonus." },
 			{ "Sway",               "sway",     &SDK::UCrWeaponAttributeSet::SwayModMultiplier,
-			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "0 removes weapon sway." },
+			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "0 removes weapon sway. Multiplies on top of any attachment bonus." },
 			{ "ADS Speed",          "ads",      &SDK::UCrWeaponAttributeSet::ADS_TransitionSpeedModMultiplier,
-			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Aim-down-sights transition speed." },
+			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Aim-down-sights transition speed. Multiplies on top of any\nattachment bonus." },
 			{ "Enemies Hit / Shot", "pierce",   &SDK::UCrWeaponAttributeSet::PossibleEnemiesHitPerTrace,
 			  1.0f, 1.00f,  10.0f, 1.0f,  "%.0f",  "Projectile piercing -- how many enemies one shot passes through." },
+		};
+
+		// Apply() mode per row, aligned with AttrIndex. Multiply/Add compose onto
+		// whatever the ability system aggregated (attachments included); Absolute
+		// replaces it outright, which only fits Enemies Hit/Shot -- that field is a
+		// literal pierce count, not a modifier layered on top of one.
+		constexpr BetterCheats::ComposedAttribute::Mode kAttrModes[kAttrCount] = {
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Damage (One Hit Kill overrides in Tick())
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Fire Rate
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Reload Speed
+			BetterCheats::ComposedAttribute::Mode::Add,       // Magazine Size -- the attribute itself is an offset
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Damage Falloff
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Recoil
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Spread
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Sway
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // ADS Speed
+			BetterCheats::ComposedAttribute::Mode::Absolute,  // Enemies Hit/Shot -- a literal count
 		};
 
 		// `match` is a lowercase substring tested against the weapon's asset name; ""
@@ -303,6 +321,24 @@ namespace BetterCheats::Panels::Weapons
 		std::atomic<int> g_activeProfile{ -1 };   // index into g_profiles, -1 = nothing equipped
 		bool             g_configApplied = false; // set once ApplySavedConfig has run; game-thread only
 
+		// One slot per weapon attribute, not per profile: character->WeaponAttributes
+		// is a single set shared across whatever weapon is equipped (see the weapon
+		// attachment audit), so switching weapons must not reset the composed state.
+		// Game-thread only.
+		BetterCheats::ComposedAttribute g_composed[kAttrCount];
+		SDK::UCrWeaponAttributeSet*     g_composedOwner = nullptr;
+
+		// Forgets every composed slot the moment the attribute set instance changes
+		// (respawn, world change) -- before anything below tries to Apply/Release
+		// against what may already be gone.
+		void ForgetComposedIfOwnerChanged(SDK::UCrWeaponAttributeSet* current)
+		{
+			if (current == g_composedOwner) return;
+			for (int a = 0; a < kAttrCount; ++a)
+				g_composed[a].Forget();
+			g_composedOwner = current;
+		}
+
 		bool IsActive(int attr, float value)
 		{
 			return std::fabs(value - kAttrs[attr].defaultValue) > kActiveEpsilon;
@@ -460,12 +496,6 @@ namespace BetterCheats::Panels::Weapons
 
 			return static_cast<SDK::ACrCharacterPlayerBase*>(pc->Pawn);
 		}
-
-		void WriteAttribute(SDK::FGameplayAttributeData& attribute, float value)
-		{
-			attribute.BaseValue    = value;
-			attribute.CurrentValue = value;
-		}
 	}
 
 	void Tick(float deltaSeconds)
@@ -518,17 +548,31 @@ namespace BetterCheats::Panels::Weapons
 
 		try
 		{
-			if (SDK::UCrWeaponAttributeSet* weapons = character->WeaponAttributes)
+			SDK::UCrWeaponAttributeSet* weapons = character->WeaponAttributes;
+			ForgetComposedIfOwnerChanged(weapons);
+
+			if (weapons)
 			{
 				for (int a = 0; a < kAttrCount; ++a)
 				{
-					if (a == kAttrDamage && profile.oneHitKill) continue;
-					if (!IsActive(a, profile.values[a]))         continue;
-					WriteAttribute(weapons->*kAttrs[a].member, profile.values[a]);
-				}
+					SDK::FGameplayAttributeData& attr = weapons->*kAttrs[a].member;
 
-				if (profile.oneHitKill)
-					WriteAttribute(weapons->*kAttrs[kAttrDamage].member, kOneHitKillDamage);
+					if (a == kAttrDamage && profile.oneHitKill)
+					{
+						// Absolute wins outright; Release() hands Damage back to the
+						// game's own aggregate once this turns off.
+						g_composed[a].Apply(weapons, attr, kOneHitKillDamage,
+							BetterCheats::ComposedAttribute::Mode::Absolute,
+							kOneHitKillDamage, kOneHitKillDamage);
+						continue;
+					}
+
+					if (IsActive(a, profile.values[a]))
+						g_composed[a].Apply(weapons, attr, profile.values[a], kAttrModes[a],
+							kAttrs[a].minValue, kAttrs[a].maxValue);
+					else
+						g_composed[a].Release(weapons, attr);
+				}
 			}
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
@@ -555,6 +599,31 @@ namespace BetterCheats::Panels::Weapons
 			if (g_autoRestock.load() && maxMag > 0.0f)
 				RestockEquippedAmmo(character, ws, maxMag);
 
+		}
+		catch (...) {}
+	}
+
+	void Shutdown()
+	{
+		// Same character the composed state was captured against -- safe to hand
+		// CurrentValue back. A different or null character means the attribute set
+		// this state refers to is already gone; ForgetComposedIfOwnerChanged would
+		// just no-op the writes below anyway, but skip the SDK call entirely.
+		SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
+		SDK::UCrWeaponAttributeSet* weapons = character ? character->WeaponAttributes : nullptr;
+
+		try
+		{
+			if (weapons && weapons == g_composedOwner)
+			{
+				for (int a = 0; a < kAttrCount; ++a)
+					g_composed[a].Release(weapons, weapons->*kAttrs[a].member);
+			}
+			else
+			{
+				for (int a = 0; a < kAttrCount; ++a)
+					g_composed[a].Forget();
+			}
 		}
 		catch (...) {}
 	}
@@ -620,6 +689,8 @@ namespace BetterCheats::Panels::Weapons
 			std::lock_guard<std::mutex> lock(g_profilesMutex);
 			EnsureBuiltInProfiles();
 		}
+
+		imgui->TextDisabled("Multipliers apply on top of the weapon's base stats and any attachments.");
 
 		imgui->SeparatorText("Ammo");
 
@@ -810,7 +881,8 @@ namespace BetterCheats::Panels::Weapons
 			if (imgui->Checkbox("One Hit Kill", &profile.oneHitKill))
 				SessionConfig::Set(ConfigKey(profile, "oneHitKill", "enabled"), profile.oneHitKill);
 			if (imgui->IsItemHovered())
-				imgui->SetTooltip("Overrides Damage with a flat 10000x while enabled.");
+				imgui->SetTooltip("Overrides Damage with a flat 10000x while enabled. Turning it off\n"
+				                  "hands Damage back to the game (attachment bonuses included).");
 
 			imgui->SameLine(0.0f, -1.0f);
 			if (imgui->Checkbox("Infinite magazine", &profile.infiniteMagazine))

@@ -247,6 +247,7 @@ extern "C" {
 		BetterCheats::Panels::Items::Shutdown();
 		BetterCheats::Panels::Inventory::Shutdown();
 		BetterCheats::Panels::Movement::Shutdown();
+		BetterCheats::Panels::Weapons::Shutdown();
 		BetterCheats::Panels::Wave::Shutdown();
 		BetterCheats::Panels::Corporations::Shutdown();
 		BetterCheats::Panels::Enemies::Shutdown();
