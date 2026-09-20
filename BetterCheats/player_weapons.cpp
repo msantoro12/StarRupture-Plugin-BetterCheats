@@ -149,6 +149,55 @@ namespace BetterCheats::Panels::Weapons
 		};
 		constexpr int kPresetCount = static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0]));
 
+		// Grenade rows (gss.16). UCrGrenadeWeaponItemDataBase extends
+		// UCrWeaponItemDataBase, so a grenade shows up through the exact same
+		// LastEquippedWeaponData/profile-discovery path as every gun -- this is
+		// what used to render the standard 10-row kAttrs table (Damage, Fire
+		// Rate, Recoil...) for a grenade, none of which mean anything for a
+		// thrown charge. These three rows replace that table for any profile
+		// whose Profile::isGrenade is set. Max/Min Charge are GAS attributes on
+		// a DIFFERENT attribute set (character->GrenadeChargeAttributes, not
+		// WeaponAttributes), so they need their own member-pointer type rather
+		// than reusing WeaponAttr.
+		using GrenadeAttr = SDK::FGameplayAttributeData SDK::UCrGrenadeChargeAttributeSet::*;
+
+		struct GrenadeRowDef
+		{
+			const char* label;
+			const char* key;
+			GrenadeAttr member;   // unused for Charge Cost -- see the comment on that row below
+			float       defaultValue, minValue, maxValue, step;
+			const char* format;
+			const char* tooltip;
+		};
+
+		enum GrenadeRowIndex : int { kGrenadeCost = 0, kGrenadeMax, kGrenadeMin, kGrenadeRowCount };
+
+		const GrenadeRowDef kGrenadeRows[kGrenadeRowCount] = {
+			// .member unused: Charge Cost composes onto the equipped grenade
+			// TYPE's own data asset field (GrenadeThrowCostOfGrenadeCharge on
+			// UCrGrenadeWeaponItemDataBase, Chimera_classes.hpp:17303), not a GAS
+			// attribute on this set -- same per-type-CDO shape as Magazine Size's
+			// BaseMagazine, just a plain float instead of FScalableFloat.Value.
+			// See Tick()'s grenade block. Kept here only so this table's shape
+			// matches kAttrs' own "every row has a member pointer" convention.
+			{ "Charge Cost", "grenadeCost", nullptr,
+			  1.0f, 0.00f, 2.00f, 0.05f, "%.2fx",
+			  "Multiplies how many charges one throw costs. 0.00x throws for free." },
+			{ "Max Charges", "grenadeMax", &SDK::UCrGrenadeChargeAttributeSet::MaxGrenadeCharge,
+			  0.0f, 0.0f, 20.0f, 1.0f, "%.0f",
+			  "Overrides how many charges you can bank, set directly rather than multiplied." },
+			{ "Min Charge",  "grenadeMin", &SDK::UCrGrenadeChargeAttributeSet::MinGrenadeCharge,
+			  0.0f, 0.0f, 5.0f, 1.0f, "%.0f",
+			  "Overrides the floor your charge count can't drop below, set directly." },
+		};
+
+		constexpr BetterCheats::ComposedAttribute::Mode kGrenadeModes[kGrenadeRowCount] = {
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Charge Cost
+			BetterCheats::ComposedAttribute::Mode::Absolute,  // Max Charges
+			BetterCheats::ComposedAttribute::Mode::Absolute,  // Min Charge
+		};
+
 		// Profiles are DISCOVERED, not hardcoded. Weapon data assets live in the paks
 		// (no I_*DataItem_C classes exist in the SDK dump), so the only truthful source
 		// of the roster is what the player actually equips.
@@ -160,6 +209,13 @@ namespace BetterCheats::Panels::Weapons
 			float       values[kAttrCount];
 			bool        oneHitKill       = false;
 			bool        infiniteMagazine = false;
+
+			// Grenade-only fields, meaningful only when isGrenade is true --
+			// discovered the same way as every other weapon, just tagged so
+			// RenderImGui can swap in the grenade-specific layout.
+			bool        isGrenade        = false;
+			float       grenadeValues[kGrenadeRowCount];
+			bool        infiniteCharges  = false;
 		};
 
 		// g_profiles is written from Tick (discovery, ApplySavedConfig) and iterated
@@ -216,6 +272,20 @@ namespace BetterCheats::Panels::Weapons
 		std::atomic<float> g_dbgAttrExpected[kAttrCount];
 		std::atomic<float> g_dbgAttrBase[kAttrCount];
 		std::atomic<float> g_dbgAttrBuffed[kAttrCount];
+
+		// Grenade row readouts (gss.16), parallel to g_dbgAttrGame/g_dbgAttrExpected
+		// above but indexed by GrenadeRowIndex instead of AttrIndex -- these three
+		// rows aren't part of the per-gun kAttrs table (Charge Cost lives on a
+		// different CDO type; Max/Min Charge live on a different attribute set),
+		// so they get their own small parallel arrays instead of a slot in that
+		// one. `unmod` is the same "captured original while active, live read
+		// while not" value g_dbgWeaponBaseMagazine already computes for Magazine
+		// Size, feeding RenderLiveValue's always-on "Unmodified" tooltip line.
+		// Only ever populated while a grenade profile is the one equipped -- see
+		// Tick()'s grenade block.
+		std::atomic<float> g_dbgGrenadeGame[kGrenadeRowCount];
+		std::atomic<float> g_dbgGrenadeExpected[kGrenadeRowCount];
+		std::atomic<float> g_dbgGrenadeUnmod[kGrenadeRowCount];
 
 		// Reserve ammo is an inventory item, not an attribute, so an empty inventory
 		// blocks reload whatever is written to attributes. Tops up only on an observed
@@ -387,13 +457,26 @@ namespace BetterCheats::Panels::Weapons
 		BetterCheats::ComposedAttribute g_composedMagazine;
 		SDK::UCrWeaponItemDataBase*     g_magazineOwner = nullptr;
 
+		// Charge Cost: same per-weapon-TYPE-CDO shape as Magazine Size above, just
+		// a plain float member instead of FScalableFloat.Value.
+		BetterCheats::ComposedAttribute    g_composedGrenadeCost;
+		SDK::UCrGrenadeWeaponItemDataBase* g_grenadeCostOwner = nullptr;
+
+		// Max/Min Charge: GAS attributes on character->GrenadeChargeAttributes, ONE
+		// shared instance regardless of grenade type -- same "shared instance,
+		// respawn-only Forget" shape as g_composed[]/g_composedOwner above, not the
+		// per-type owner-swap-on-Release shape Magazine/Charge Cost need.
+		BetterCheats::ComposedAttribute    g_composedGrenade[2];   // indexed by g - kGrenadeMax, see Tick()
+		SDK::UCrGrenadeChargeAttributeSet* g_grenadeAttrOwner = nullptr;
+
 		// Forgets every composed slot the moment the attribute set instance changes
 		// (respawn, world change) -- before anything below tries to Apply/Release
-		// against what may already be gone. Also drops the magazine slot: unlike
-		// `weapons`, its owner is a per-weapon-TYPE data asset, not the character,
-		// but a respawn is exactly the kind of "can't trust what we think we own
-		// any more" event that should forget it too rather than try to Release()
-		// against a data asset we can no longer be sure is still valid.
+		// against what may already be gone. Also drops the magazine and grenade-
+		// cost slots: unlike `weapons`, their owners are per-weapon-TYPE data
+		// assets, not the character, but a respawn is exactly the kind of "can't
+		// trust what we think we own any more" event that should forget them too
+		// rather than try to Release() against a data asset we can no longer be
+		// sure is still valid.
 		void ForgetComposedIfOwnerChanged(SDK::UCrWeaponAttributeSet* current)
 		{
 			if (current == g_composedOwner) return;
@@ -403,6 +486,13 @@ namespace BetterCheats::Panels::Weapons
 
 			g_composedMagazine.Forget();
 			g_magazineOwner = nullptr;
+
+			g_composedGrenadeCost.Forget();
+			g_grenadeCostOwner = nullptr;
+
+			g_composedGrenade[0].Forget();
+			g_composedGrenade[1].Forget();
+			g_grenadeAttrOwner = nullptr;
 		}
 
 		// Unlike `weapons` (one shared instance regardless of what's equipped),
@@ -422,9 +512,67 @@ namespace BetterCheats::Panels::Weapons
 			g_magazineOwner = current;
 		}
 
+		// Same reasoning as ReleaseMagazineIfOwnerChanged: Charge Cost lives on the
+		// grenade TYPE's own CDO, not the character, so switching away from a
+		// grenade (to a gun, a tool, or a different grenade type) must restore the
+		// one being left before adopting the next.
+		void ReleaseGrenadeCostIfOwnerChanged(SDK::UCrGrenadeWeaponItemDataBase* current)
+		{
+			if (current == g_grenadeCostOwner) return;
+			if (g_grenadeCostOwner)
+			{
+				g_composedGrenadeCost.Release(g_grenadeCostOwner, g_grenadeCostOwner->GrenadeThrowCostOfGrenadeCharge);
+				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeCost");
+			}
+			g_grenadeCostOwner = current;
+		}
+
+		// Max/Min Charge share ONE instance across every grenade type (like
+		// WeaponAttributes does for guns), so a weapon SWITCH must Release, not
+		// Forget -- handled per-row in Tick() via `active`. Forget only belongs
+		// here, on a genuine instance change (respawn, world change).
+		void ForgetGrenadeAttrsIfOwnerChanged(SDK::UCrGrenadeChargeAttributeSet* current)
+		{
+			if (current == g_grenadeAttrOwner) return;
+			g_composedGrenade[0].Forget();
+			g_composedGrenade[1].Forget();
+			g_grenadeAttrOwner = current;
+		}
+
 		bool IsActive(int attr, float value)
 		{
 			return BetterCheats::DiffersFromDefault(value, kAttrs[attr].defaultValue);
+		}
+
+		// The capture/write/restore/persist dance every composed row in this file
+		// shares. The ten kAttrs rows still inline it (their own buffed/base/
+		// One-Hit-Kill bookkeeping interleaves too tightly to factor out cleanly),
+		// but Magazine Size and the grenade rows below all follow this exact shape,
+		// so it's a real helper rather than a third and fourth copy-paste.
+		struct ComposeStep { float game; float expected; };
+
+		ComposeStep ApplyComposedRow(BetterCheats::ComposedAttribute& composed, const void* owner,
+			float& value, const std::string& key, bool active, float amount,
+			BetterCheats::ComposedAttribute::Mode mode, float minValue, float maxValue)
+		{
+			const bool  wasActive     = composed.IsActive();
+			const float previousWrite = composed.GetWritten();
+			if (!wasActive)
+				BetterCheats::RestoreIfStale(key, value);
+			const float gameBefore = value;
+
+			if (active)
+				composed.Apply(owner, value, amount, mode, minValue, maxValue);
+			else
+				composed.Release(owner, value);
+
+			if (active && (!wasActive || gameBefore != previousWrite))
+				BetterCheats::SaveComposeState(key, composed.GetGame(), composed.GetWritten());
+			else if (!active)
+				BetterCheats::ClearComposeState(key);
+
+			const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+			return { gameBefore, expected };
 		}
 
 		std::string ToLower(const std::string& in)
@@ -504,6 +652,8 @@ namespace BetterCheats::Panels::Weapons
 		{
 			for (int a = 0; a < kAttrCount; ++a)
 				p.values[a] = kAttrs[a].defaultValue;
+			for (int g = 0; g < kGrenadeRowCount; ++g)
+				p.grenadeValues[g] = kGrenadeRows[g].defaultValue;
 		}
 
 		void LoadProfileFromConfig(Profile& p)
@@ -514,6 +664,10 @@ namespace BetterCheats::Panels::Weapons
 				p.values[a] = SessionConfig::Get(ConfigKey(p, kAttrs[a].key, "value"), p.values[a]);
 			p.oneHitKill       = SessionConfig::Get(ConfigKey(p, "oneHitKill", "enabled"), false);
 			p.infiniteMagazine = SessionConfig::Get(ConfigKey(p, "infiniteMagazine", "enabled"), false);
+
+			for (int g = 0; g < kGrenadeRowCount; ++g)
+				p.grenadeValues[g] = SessionConfig::Get(ConfigKey(p, kGrenadeRows[g].key, "value"), p.grenadeValues[g]);
+			p.infiniteCharges = SessionConfig::Get(ConfigKey(p, "infiniteCharges", "enabled"), false);
 		}
 
 		// Caller must hold g_profilesMutex.
@@ -523,11 +677,11 @@ namespace BetterCheats::Panels::Weapons
 				return;
 			nlohmann::json arr = nlohmann::json::array();
 			for (const Profile& p : g_profiles)
-				arr.push_back({ {"key", p.key}, {"display", p.display}, {"raw", p.raw} });
+				arr.push_back({ {"key", p.key}, {"display", p.display}, {"raw", p.raw}, {"isGrenade", p.isGrenade} });
 			SessionConfig::Set("playerWeapons.known", arr);
 		}
 
-		int FindOrCreateProfile(const std::string& rawName);
+		int FindOrCreateProfile(const std::string& rawName, bool isGrenade);
 
 		// Make sure every known weapon has a tab, whether or not it has been equipped.
 		// Caller must hold g_profilesMutex.
@@ -537,11 +691,11 @@ namespace BetterCheats::Panels::Weapons
 			if (s_done) return;
 			s_done = true;
 			for (int i = 0; i < kBuiltInCount; ++i)
-				FindOrCreateProfile(kBuiltInWeapons[i]);
+				FindOrCreateProfile(kBuiltInWeapons[i], false);
 		}
 
 		// Caller must hold g_profilesMutex.
-		int FindOrCreateProfile(const std::string& rawName)
+		int FindOrCreateProfile(const std::string& rawName, bool isGrenade)
 		{
 			const std::string key = Sanitize(rawName);
 			for (size_t i = 0; i < g_profiles.size(); ++i)
@@ -549,15 +703,17 @@ namespace BetterCheats::Panels::Weapons
 					return static_cast<int>(i);
 
 			Profile p;
-			p.key     = key;
-			p.raw     = rawName;
-			p.display = Prettify(rawName);
+			p.key       = key;
+			p.raw       = rawName;
+			p.display   = Prettify(rawName);
+			p.isGrenade = isGrenade;
 			ResetProfileValues(p);
 			g_profiles.push_back(p);
 			LoadProfileFromConfig(g_profiles.back());
 			PersistKnownWeapons();
 
-			LOG_INFO("Weapons: discovered weapon '%s' -> tab '%s'", rawName.c_str(), p.display.c_str());
+			LOG_INFO("Weapons: discovered weapon '%s' -> tab '%s'%s", rawName.c_str(), p.display.c_str(),
+				isGrenade ? " (grenade)" : "");
 			return static_cast<int>(g_profiles.size()) - 1;
 		}
 
@@ -592,8 +748,9 @@ namespace BetterCheats::Panels::Weapons
 			// Holding a tool leaves no active weapon profile, so nothing is applied.
 			if (IsWeaponAsset(raw))
 			{
+				const bool isGrenade = data->IsA(SDK::UCrGrenadeWeaponItemDataBase::StaticClass());
 				std::lock_guard<std::mutex> lock(g_profilesMutex);
-				g_activeProfile.store(FindOrCreateProfile(raw));
+				g_activeProfile.store(FindOrCreateProfile(raw, isGrenade));
 			}
 			else
 			{
@@ -706,34 +863,14 @@ namespace BetterCheats::Panels::Weapons
 
 			if (equippedData)
 			{
-				constexpr const char* kMagazineKey = "playerWeapons.compose.magazine";
-				const bool  wasActive     = g_composedMagazine.IsActive();
-				const float previousWrite = g_composedMagazine.GetWritten();
-				if (!wasActive)
-					BetterCheats::RestoreIfStale(kMagazineKey, equippedData->BaseMagazine.Value);
-				const float gameBefore = equippedData->BaseMagazine.Value;
+				const bool active = IsActive(kAttrMagazine, profile.values[kAttrMagazine]);
+				const ComposeStep step = ApplyComposedRow(g_composedMagazine, equippedData,
+					equippedData->BaseMagazine.Value, "playerWeapons.compose.magazine",
+					active, profile.values[kAttrMagazine], BetterCheats::ComposedAttribute::Mode::Add,
+					kMagazineFloor, kMagazineCeiling);
 
-				bool active = false;
-				if (IsActive(kAttrMagazine, profile.values[kAttrMagazine]))
-				{
-					active = true;
-					g_composedMagazine.Apply(equippedData, equippedData->BaseMagazine.Value,
-						profile.values[kAttrMagazine], BetterCheats::ComposedAttribute::Mode::Add,
-						kMagazineFloor, kMagazineCeiling);
-				}
-				else
-				{
-					g_composedMagazine.Release(equippedData, equippedData->BaseMagazine.Value);
-				}
-
-				if (active && (!wasActive || gameBefore != previousWrite))
-					BetterCheats::SaveComposeState(kMagazineKey, g_composedMagazine.GetGame(), g_composedMagazine.GetWritten());
-				else if (!active)
-					BetterCheats::ClearComposeState(kMagazineKey);
-
-				const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
-				g_dbgAttrGame[kAttrMagazine].store(gameBefore);
-				g_dbgAttrExpected[kAttrMagazine].store(expected);
+				g_dbgAttrGame[kAttrMagazine].store(step.game);
+				g_dbgAttrExpected[kAttrMagazine].store(step.expected);
 
 				// Weapon base stats -- real CDO fields the game itself uses, never
 				// written by us except BaseMagazine, so show the ORIGINAL we captured
@@ -741,7 +878,74 @@ namespace BetterCheats::Panels::Weapons
 				g_dbgWeaponBaseDamage.store(equippedData->BaseDamage.Value);
 				g_dbgWeaponRoundsPerMinute.store(equippedData->RoundsPerMinute.Value);
 				g_dbgWeaponBaseRange.store(equippedData->BaseRange.Value);
-				g_dbgWeaponBaseMagazine.store(active ? g_composedMagazine.GetGame() : gameBefore);
+				g_dbgWeaponBaseMagazine.store(active ? g_composedMagazine.GetGame() : step.game);
+			}
+
+			// Grenade rows (gss.16). Charge Cost lives on the equipped grenade
+			// TYPE's own data asset (UCrGrenadeWeaponItemDataBase extends
+			// UCrWeaponItemDataBase, so LastEquippedWeaponData covers it too) --
+			// same per-type-CDO shape as BaseMagazine above. Max/Min Charge are GAS
+			// attributes on character->GrenadeChargeAttributes, ONE shared instance
+			// regardless of grenade type -- same "shared instance, active profile
+			// only" convention as WeaponAttributes above. All three, and Infinite
+			// Charges below, apply only while a grenade profile is the one
+			// currently equipped, matching every other per-weapon row in this
+			// file: switching to a gun or tool releases them exactly like
+			// switching weapons releases Damage/Fire Rate/etc.
+			SDK::UCrGrenadeWeaponItemDataBase* grenadeData =
+				(equippedData && equippedData->IsA(SDK::UCrGrenadeWeaponItemDataBase::StaticClass()))
+					? static_cast<SDK::UCrGrenadeWeaponItemDataBase*>(equippedData)
+					: nullptr;
+			ReleaseGrenadeCostIfOwnerChanged(grenadeData);
+
+			if (grenadeData)
+			{
+				const bool active = BetterCheats::DiffersFromDefault(
+					profile.grenadeValues[kGrenadeCost], kGrenadeRows[kGrenadeCost].defaultValue);
+				const ComposeStep step = ApplyComposedRow(g_composedGrenadeCost, grenadeData,
+					grenadeData->GrenadeThrowCostOfGrenadeCharge, "playerWeapons.compose.grenadeCost",
+					active, profile.grenadeValues[kGrenadeCost], kGrenadeModes[kGrenadeCost],
+					kGrenadeRows[kGrenadeCost].minValue, kGrenadeRows[kGrenadeCost].maxValue);
+
+				g_dbgGrenadeGame[kGrenadeCost].store(step.game);
+				g_dbgGrenadeExpected[kGrenadeCost].store(step.expected);
+				g_dbgGrenadeUnmod[kGrenadeCost].store(active ? g_composedGrenadeCost.GetGame() : step.game);
+			}
+
+			SDK::UCrGrenadeChargeAttributeSet* grenadeAttrs = character->GrenadeChargeAttributes;
+			ForgetGrenadeAttrsIfOwnerChanged(grenadeAttrs);
+
+			if (grenadeAttrs)
+			{
+				for (int g = kGrenadeMax; g <= kGrenadeMin; ++g)
+				{
+					const GrenadeRowDef& def = kGrenadeRows[g];
+					float& value = (grenadeAttrs->*def.member).CurrentValue;
+					const bool active = grenadeData && BetterCheats::DiffersFromDefault(profile.grenadeValues[g], def.defaultValue);
+					BetterCheats::ComposedAttribute& composed = g_composedGrenade[g - kGrenadeMax];
+					const std::string key = std::string("playerWeapons.compose.") + def.key;
+
+					const ComposeStep step = ApplyComposedRow(composed, grenadeAttrs, value, key,
+						active, profile.grenadeValues[g], kGrenadeModes[g], def.minValue, def.maxValue);
+
+					g_dbgGrenadeGame[g].store(step.game);
+					g_dbgGrenadeExpected[g].store(step.expected);
+					g_dbgGrenadeUnmod[g].store(active ? composed.GetGame() : step.game);
+				}
+
+				// Infinite Charges: tops CurrentGrenadeCharge up to Max when it
+				// drops, exactly like Infinite magazine tops SetEquippedWeaponCurrentAmmo
+				// below -- never an unconditional write every tick (which would
+				// fight a regen-style LEM/buff), only a top-up on the edge where
+				// it's short of whatever Max is currently honouring (the game's
+				// own, or our Max Charges override just above).
+				if (grenadeData && profile.infiniteCharges)
+				{
+					const float maxCharge = grenadeAttrs->MaxGrenadeCharge.CurrentValue;
+					const float curCharge = grenadeAttrs->CurrentGrenadeCharge.CurrentValue;
+					if (maxCharge > 0.0f && curCharge < maxCharge)
+						grenadeAttrs->CurrentGrenadeCharge.CurrentValue = maxCharge;
+				}
 			}
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
@@ -785,6 +989,9 @@ namespace BetterCheats::Panels::Weapons
 			for (int a = 0; a < kAttrCount; ++a)
 				g_composed[a].Forget();
 			g_composedMagazine.Forget();
+			g_composedGrenadeCost.Forget();
+			g_composedGrenade[0].Forget();
+			g_composedGrenade[1].Forget();
 			return;
 		}
 
@@ -794,6 +1001,7 @@ namespace BetterCheats::Panels::Weapons
 		// just no-op the writes below anyway, but skip the SDK call entirely.
 		SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
 		SDK::UCrWeaponAttributeSet* weapons = character ? character->WeaponAttributes : nullptr;
+		SDK::UCrGrenadeChargeAttributeSet* grenadeAttrs = character ? character->GrenadeChargeAttributes : nullptr;
 
 		try
 		{
@@ -821,6 +1029,29 @@ namespace BetterCheats::Panels::Weapons
 			{
 				g_composedMagazine.Forget();
 			}
+
+			if (g_grenadeCostOwner)
+			{
+				g_composedGrenadeCost.Release(g_grenadeCostOwner, g_grenadeCostOwner->GrenadeThrowCostOfGrenadeCharge);
+				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeCost");
+			}
+			else
+			{
+				g_composedGrenadeCost.Forget();
+			}
+
+			if (grenadeAttrs && grenadeAttrs == g_grenadeAttrOwner)
+			{
+				g_composedGrenade[0].Release(grenadeAttrs, grenadeAttrs->MaxGrenadeCharge.CurrentValue);
+				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeMax");
+				g_composedGrenade[1].Release(grenadeAttrs, grenadeAttrs->MinGrenadeCharge.CurrentValue);
+				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeMin");
+			}
+			else
+			{
+				g_composedGrenade[0].Forget();
+				g_composedGrenade[1].Forget();
+			}
 		}
 		catch (...) {}
 	}
@@ -844,9 +1075,10 @@ namespace BetterCheats::Panels::Weapons
 				for (const auto& e : known)
 				{
 					Profile p;
-					p.key     = e.value("key", std::string());
-					p.display = e.value("display", std::string());
-					p.raw     = e.value("raw", std::string());
+					p.key       = e.value("key", std::string());
+					p.display   = e.value("display", std::string());
+					p.raw       = e.value("raw", std::string());
+					p.isGrenade = e.value("isGrenade", false);
 					if (p.key.empty()) continue;
 
 					// Drop tools recorded by an earlier build before they were filtered out.
@@ -864,7 +1096,7 @@ namespace BetterCheats::Panels::Weapons
 			// ApplySavedConfig() rebuilds the list from config, which may predate the
 			// built-in roster -- re-seed so every weapon still has a tab.
 			for (int i = 0; i < kBuiltInCount; ++i)
-				FindOrCreateProfile(kBuiltInWeapons[i]);
+				FindOrCreateProfile(kBuiltInWeapons[i], false);
 
 			profileCount = g_profiles.size();
 		}
@@ -1072,6 +1304,94 @@ namespace BetterCheats::Panels::Weapons
 
 			imgui->PushIDInt(p);
 
+			if (profile.isGrenade)
+			{
+				// Grenade-specific layout replaces the standard weapon one entirely --
+				// none of Damage/Fire Rate/Recoil/Spread/etc. mean anything for a
+				// thrown charge, and neither do the gun presets above (they index
+				// into kAttrs by attribute, all meaningless here).
+				imgui->TextDisabled("Damage, blast radius, fuse time and throw force aren't reachable in\n"
+				                    "this game version -- only charge cost and charge count can be changed here.");
+				imgui->Spacing();
+
+				if (imgui->Checkbox("Infinite charges", &profile.infiniteCharges))
+					SessionConfig::Set(ConfigKey(profile, "infiniteCharges", "enabled"), profile.infiniteCharges);
+				if (imgui->IsItemHovered())
+					imgui->SetTooltip("Tops your charge count back up to the max the moment it drops\n"
+					                  "below it -- using whatever the game (or your own Max Charges\n"
+					                  "override below) currently honours as the max. Same top-up\n"
+					                  "'Infinite magazine' uses for ammo, not a permanent override.");
+
+				imgui->Spacing();
+
+				if (imgui->BeginTable("##grenade_attr_table", 3, kWeaponsTableFlags))
+				{
+					const float grenadeLabelReserve = BetterCheats::UI::PrescanLabelWidth(imgui, kGrenadeRowCount,
+						[](int g) { return kGrenadeRows[g].label; });
+
+					imgui->TableSetupColumn("Attribute", BetterCheats::UI::kColumnWidthFixed,
+						BetterCheats::UI::GetReadoutColumnWidth(imgui, grenadeLabelReserve));
+					imgui->TableSetupColumn("Value",     0, 0.54f);
+					imgui->TableSetupColumn("",          0, 0.10f);
+
+					for (int g = 0; g < kGrenadeRowCount; ++g)
+					{
+						const GrenadeRowDef& def   = kGrenadeRows[g];
+						float&                value = profile.grenadeValues[g];
+						const bool active = BetterCheats::DiffersFromDefault(value, def.defaultValue);
+
+						imgui->PushIDInt(g);
+						imgui->TableNextRow(0, 0.0f);
+
+						const bool showLive = g_showLiveValues.load();
+						char changeDesc[24];
+						if (showLive)
+							BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc), kGrenadeModes[g], value);
+
+						BetterCheats::UI::RowSpec spec;
+						spec.label         = def.label;
+						spec.tooltip       = def.tooltip;
+						spec.value         = &value;
+						spec.minValue      = def.minValue;
+						spec.maxValue      = def.maxValue;
+						spec.step          = def.step;
+						spec.format        = def.format;
+						spec.resetValue    = def.defaultValue;
+						spec.active        = active;
+						spec.showLive      = showLive;
+						spec.expected      = g_dbgGrenadeExpected[g].load();
+						spec.game          = g_dbgGrenadeGame[g].load();
+						spec.composing     = active;
+						spec.hasBase       = false;   // no BaseValue split for these -- see cost/max/min comments in Tick()
+						spec.unmodified    = g_dbgGrenadeUnmod[g].load();
+						spec.changeDesc    = changeDesc;
+						spec.labelReserve  = grenadeLabelReserve;
+
+						if (BetterCheats::UI::BuildRow(imgui, spec).changed)
+							SessionConfig::Set(ConfigKey(profile, def.key, "value"), value);
+
+						imgui->PopID();
+					}
+
+					imgui->EndTable();
+				}
+
+				imgui->Spacing();
+				if (imgui->SmallButton("Reset this weapon to stock"))
+				{
+					profile.infiniteCharges = false;
+					SessionConfig::Set(ConfigKey(profile, "infiniteCharges", "enabled"), false);
+					for (int g = 0; g < kGrenadeRowCount; ++g)
+					{
+						profile.grenadeValues[g] = kGrenadeRows[g].defaultValue;
+						SessionConfig::Set(ConfigKey(profile, kGrenadeRows[g].key, "value"), kGrenadeRows[g].defaultValue);
+					}
+				}
+				imgui->SameLine(0.0f, -1.0f);
+				imgui->TextDisabled(profile.raw.c_str());
+			}
+			else
+			{
 			// A preset writes only into THIS weapon's profile, so every weapon carries its
 			// own independently. `match` gates presets that only make sense on one weapon.
 			const std::string loweredRaw = ToLower(profile.raw);
@@ -1210,6 +1530,7 @@ namespace BetterCheats::Panels::Weapons
 			}
 			imgui->SameLine(0.0f, -1.0f);
 			imgui->TextDisabled(profile.raw.c_str());
+			} // else (!profile.isGrenade)
 
 			imgui->PopID();
 			imgui->EndTabItem();
