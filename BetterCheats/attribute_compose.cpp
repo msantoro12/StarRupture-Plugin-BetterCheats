@@ -78,4 +78,28 @@ namespace BetterCheats
 	{
 		SessionConfig::Set(keyPrefix + ".stored", false);
 	}
+
+	ComposeStep ApplyComposedRow(ComposedAttribute& composed, const void* owner,
+		float& value, const std::string& key, bool active, float amount,
+		ComposedAttribute::Mode mode, float minValue, float maxValue)
+	{
+		const bool  wasActive     = composed.IsActive();
+		const float previousWrite = composed.GetWritten();
+		if (!wasActive)
+			RestoreIfStale(key, value);
+		const float gameBefore = value;
+
+		if (active)
+			composed.Apply(owner, value, amount, mode, minValue, maxValue);
+		else
+			composed.Release(owner, value);
+
+		if (active && (!wasActive || gameBefore != previousWrite))
+			SaveComposeState(key, composed.GetGame(), composed.GetWritten());
+		else if (!active)
+			ClearComposeState(key);
+
+		const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
+		return { gameBefore, expected };
+	}
 }

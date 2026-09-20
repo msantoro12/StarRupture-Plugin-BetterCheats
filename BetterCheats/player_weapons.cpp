@@ -198,6 +198,131 @@ namespace BetterCheats::Panels::Weapons
 			BetterCheats::ComposedAttribute::Mode::Absolute,  // Min Charge
 		};
 
+		// Fuse / Blast Radius / Throw Force (gss.16 correction). The first pass
+		// of the grenade review only searched Client/SDK/ and missed these --
+		// they live on classes Dumper-7 only typed under Server/SDK/ (
+		// BP_GrenadeProjectile_classes.hpp, GA_ThrowGrenade_classes.hpp), whose
+		// struct layout for THIS client build is unverified and may not match
+		// (see reviews/grenade-reachability.md). Resolved by NAME via the
+		// loader's IPluginObjectProperties instead of a cast through the
+		// Server SDK's C++ struct -- offset-independent, so a layout mismatch
+		// can't silently read/write the wrong bytes.
+		//
+		// Unlike Charge Cost/Max/Min Charge above, each of these three lives on
+		// exactly ONE shared CDO for the whole game (one projectile class, one
+		// throw ability) -- not per grenade type -- so they're global controls
+		// applied every tick regardless of what's currently equipped, shown
+		// identically on every grenade tab rather than stored per-Profile.
+		struct GrenadeGlobalDef
+		{
+			const char* label;
+			const char* key;            // SessionConfig leaf + compose-state key segment
+			const char* className;      // CDO's class, "Default__<className>" is its object name
+			const char* propertyName;   // resolved via IPluginObjectProperties::FindPropertyByName
+			float       defaultValue, minValue, maxValue, step;   // slider range, multiplier space
+			const char* format;
+			const char* tooltip;
+		};
+
+		enum GrenadeGlobalIndex : int { kGrenadeFuse = 0, kGrenadeRadius, kGrenadeThrowForce, kGrenadeGlobalCount };
+
+		const GrenadeGlobalDef kGrenadeGlobals[kGrenadeGlobalCount] = {
+			{ "Fuse Time",    "grenadeFuse",   "BP_GrenadeProjectile_C", "TimeToExplode",
+			  1.0f, 0.05f, 5.00f, 0.05f, "%.2fx",
+			  "Multiplies time-to-explode. Lower pops sooner. One shared projectile\nclass, so this affects every grenade type." },
+			{ "Blast Radius", "grenadeRadius", "BP_GrenadeProjectile_C", "DamageRadius",
+			  1.0f, 0.10f, 5.00f, 0.05f, "%.2fx",
+			  "Multiplies the explosion's damage radius. One shared projectile class,\nso this affects every grenade type." },
+			{ "Throw Force",  "grenadeThrow",  "GA_ThrowGrenade_C",      "ProjectileSpeed",
+			  1.0f, 0.10f, 5.00f, 0.05f, "%.2fx",
+			  "Multiplies how fast a thrown grenade launches. One shared throw\nability, so this affects every grenade type." },
+		};
+
+		// Generic final-value safety clamp (not the slider's own range above,
+		// which bounds the multiplier the user picks) -- the real baseline
+		// magnitudes for these three fields are unverified without a live
+		// in-game read, so this just guards against zero/negative/runaway
+		// results rather than encoding a game-specific number.
+		constexpr float kGrenadeGlobalFinalMin = 0.001f;
+		constexpr float kGrenadeGlobalFinalMax = 1000000.0f;
+
+		// How long between resolution retries while a CDO/property hasn't
+		// resolved yet (class package not loaded, ability not granted yet) --
+		// WalkAllObjectsInto-family calls are a GObjects scan, too expensive to
+		// retry every tick. Once resolved it's cached forever (CDOs don't
+		// disappear), so this only ever costs anything before the player's
+		// first grenade.
+		constexpr float kGrenadeGlobalRetryInterval = 5.0f;
+
+		struct GrenadeFieldHandle
+		{
+			void*                 object        = nullptr;
+			PluginPropertyHandle  property      = nullptr;
+			bool                  ok            = false;
+			bool                  loggedMiss    = false;
+			float                 retryCooldown = 0.0f;
+		};
+
+		GrenadeFieldHandle              g_grenadeGlobalHandle[kGrenadeGlobalCount];
+		BetterCheats::ComposedAttribute g_composedGrenadeGlobal[kGrenadeGlobalCount];
+		std::atomic<float>              g_grenadeGlobalValue[kGrenadeGlobalCount] = { 1.0f, 1.0f, 1.0f };
+
+		// Debug readout, parallel to g_dbgGrenadeGame/Expected -- these three
+		// aren't Profile-scoped (see above), so they get their own tiny arrays
+		// rather than a slot in that one.
+		std::atomic<float> g_dbgGrenadeGlobalGame[kGrenadeGlobalCount];
+		std::atomic<float> g_dbgGrenadeGlobalExpected[kGrenadeGlobalCount];
+
+		// Retries every kGrenadeGlobalRetryInterval seconds until the CDO and
+		// its named property both resolve, then caches the result forever.
+		// Game thread only (ObjectWalker/ObjectProperties both touch GObjects).
+		bool ResolveGrenadeField(GrenadeFieldHandle& h, const char* className, const char* propertyName, float deltaSeconds)
+		{
+			if (h.ok) return true;
+
+			h.retryCooldown -= deltaSeconds;
+			if (h.retryCooldown > 0.0f) return false;
+			h.retryCooldown = kGrenadeGlobalRetryInterval;
+
+			IPluginHooks* hooks = GetHooks();
+			IPluginObjectWalker*     walker = hooks ? hooks->ObjectWalker     : nullptr;
+			IPluginObjectProperties* props  = hooks ? hooks->ObjectProperties : nullptr;
+			if (!walker || !props || !walker->IsReady() || !props->IsReady())
+				return false;   // not ready yet -- try again next cooldown
+
+			char cdoName[160];
+			snprintf(cdoName, sizeof(cdoName), "Default__%s", className);
+			void* object = walker->FindFirstObjectByName(cdoName);
+			if (!object)
+			{
+				if (!h.loggedMiss)
+				{
+					LOG_WARN("Weapons: grenade CDO '%s' not found (yet) -- '%s' stays disabled until it resolves.",
+						cdoName, propertyName);
+					h.loggedMiss = true;
+				}
+				return false;
+			}
+
+			PluginPropertyHandle property = props->FindPropertyByName(className, propertyName);
+			if (!property || props->GetPropertyKind(property) != PluginPropertyKind::Float)
+			{
+				if (!h.loggedMiss)
+				{
+					LOG_WARN("Weapons: property '%s::%s' not found or not a float -- row stays disabled.",
+						className, propertyName);
+					h.loggedMiss = true;
+				}
+				return false;
+			}
+
+			h.object   = object;
+			h.property = property;
+			h.ok       = true;
+			LOG_INFO("Weapons: resolved grenade field '%s::%s'.", className, propertyName);
+			return true;
+		}
+
 		// Profiles are DISCOVERED, not hardcoded. Weapon data assets live in the paks
 		// (no I_*DataItem_C classes exist in the SDK dump), so the only truthful source
 		// of the roster is what the player actually equips.
@@ -544,36 +669,12 @@ namespace BetterCheats::Panels::Weapons
 			return BetterCheats::DiffersFromDefault(value, kAttrs[attr].defaultValue);
 		}
 
-		// The capture/write/restore/persist dance every composed row in this file
-		// shares. The ten kAttrs rows still inline it (their own buffed/base/
-		// One-Hit-Kill bookkeeping interleaves too tightly to factor out cleanly),
-		// but Magazine Size and the grenade rows below all follow this exact shape,
-		// so it's a real helper rather than a third and fourth copy-paste.
-		struct ComposeStep { float game; float expected; };
-
-		ComposeStep ApplyComposedRow(BetterCheats::ComposedAttribute& composed, const void* owner,
-			float& value, const std::string& key, bool active, float amount,
-			BetterCheats::ComposedAttribute::Mode mode, float minValue, float maxValue)
-		{
-			const bool  wasActive     = composed.IsActive();
-			const float previousWrite = composed.GetWritten();
-			if (!wasActive)
-				BetterCheats::RestoreIfStale(key, value);
-			const float gameBefore = value;
-
-			if (active)
-				composed.Apply(owner, value, amount, mode, minValue, maxValue);
-			else
-				composed.Release(owner, value);
-
-			if (active && (!wasActive || gameBefore != previousWrite))
-				BetterCheats::SaveComposeState(key, composed.GetGame(), composed.GetWritten());
-			else if (!active)
-				BetterCheats::ClearComposeState(key);
-
-			const float expected = active ? (wasActive ? previousWrite : gameBefore) : gameBefore;
-			return { gameBefore, expected };
-		}
+		// ComposeStep/ApplyComposedRow: the capture/write/restore/persist dance
+		// every composed row in this file (except the ten kAttrs rows, whose
+		// own buffed/base/One-Hit-Kill bookkeeping interleaves too tightly to
+		// factor out cleanly) shares -- now a BetterCheats:: helper in
+		// attribute_compose.h, found here via unqualified enclosing-namespace
+		// lookup, same as ComposedAttribute itself.
 
 		std::string ToLower(const std::string& in)
 		{
@@ -948,6 +1049,41 @@ namespace BetterCheats::Panels::Weapons
 				}
 			}
 
+			// Fuse / Blast Radius / Throw Force (gss.16 correction): global,
+			// not gated by whether a grenade is currently equipped -- see the
+			// GrenadeGlobalDef comment above for why.
+			{
+				IPluginHooks* hooks = GetHooks();
+				IPluginObjectProperties* props = hooks ? hooks->ObjectProperties : nullptr;
+
+				for (int g = 0; g < kGrenadeGlobalCount; ++g)
+				{
+					const GrenadeGlobalDef& def = kGrenadeGlobals[g];
+					if (!props || !ResolveGrenadeField(g_grenadeGlobalHandle[g], def.className, def.propertyName, deltaSeconds))
+						continue;
+
+					GrenadeFieldHandle& h = g_grenadeGlobalHandle[g];
+					double raw = 0.0;
+					if (!props->GetFloatProperty(h.object, h.property, &raw))
+						continue;
+
+					float valueF = static_cast<float>(raw);
+					const float sliderValue = g_grenadeGlobalValue[g].load();
+					const bool  active = BetterCheats::DiffersFromDefault(sliderValue, def.defaultValue);
+					const std::string key = std::string("playerWeapons.compose.") + def.key;
+
+					const ComposeStep step = ApplyComposedRow(g_composedGrenadeGlobal[g], h.object, valueF, key,
+						active, sliderValue, BetterCheats::ComposedAttribute::Mode::Multiply,
+						kGrenadeGlobalFinalMin, kGrenadeGlobalFinalMax);
+
+					g_dbgGrenadeGlobalGame[g].store(step.game);
+					g_dbgGrenadeGlobalExpected[g].store(step.expected);
+
+					if (raw != static_cast<double>(valueF))
+						props->SetFloatProperty(h.object, h.property, static_cast<double>(valueF));
+				}
+			}
+
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
 			// tick if written directly; the unreplicated Cr multiplier is what sticks.
 			// Holding the magazine at full is what survives: it never empties, so it never
@@ -992,6 +1128,8 @@ namespace BetterCheats::Panels::Weapons
 			g_composedGrenadeCost.Forget();
 			g_composedGrenade[0].Forget();
 			g_composedGrenade[1].Forget();
+			for (int g = 0; g < kGrenadeGlobalCount; ++g)
+				g_composedGrenadeGlobal[g].Forget();
 			return;
 		}
 
@@ -1052,6 +1190,32 @@ namespace BetterCheats::Panels::Weapons
 				g_composedGrenade[0].Forget();
 				g_composedGrenade[1].Forget();
 			}
+
+			// Fuse/Blast Radius/Throw Force: global CDOs, not tied to the local
+			// character at all -- resolved once, valid regardless of who (or
+			// whether anyone) is currently possessed, so no owner-swap check.
+			IPluginHooks* hooks = GetHooks();
+			IPluginObjectProperties* props = hooks ? hooks->ObjectProperties : nullptr;
+			for (int g = 0; g < kGrenadeGlobalCount; ++g)
+			{
+				GrenadeFieldHandle& h = g_grenadeGlobalHandle[g];
+				if (props && h.ok)
+				{
+					double raw = 0.0;
+					if (props->GetFloatProperty(h.object, h.property, &raw))
+					{
+						float valueF = static_cast<float>(raw);
+						g_composedGrenadeGlobal[g].Release(h.object, valueF);
+						if (raw != static_cast<double>(valueF))
+							props->SetFloatProperty(h.object, h.property, static_cast<double>(valueF));
+					}
+					BetterCheats::ClearComposeState(std::string("playerWeapons.compose.") + kGrenadeGlobals[g].key);
+				}
+				else
+				{
+					g_composedGrenadeGlobal[g].Forget();
+				}
+			}
 		}
 		catch (...) {}
 	}
@@ -1106,6 +1270,10 @@ namespace BetterCheats::Panels::Weapons
 		g_restockHidden.store(SessionConfig::Get("playerWeapons.restockHidden", true));
 		g_restockMags.store(SessionConfig::Get("playerWeapons.restockMags", 3.0f));
 		g_showLiveValues.store(SessionConfig::Get("playerWeapons.showLiveValues", true));
+
+		for (int g = 0; g < kGrenadeGlobalCount; ++g)
+			g_grenadeGlobalValue[g].store(SessionConfig::Get(
+				std::string("playerWeapons.") + kGrenadeGlobals[g].key + ".value", kGrenadeGlobals[g].defaultValue));
 
 		g_configApplied = true;
 
@@ -1310,8 +1478,9 @@ namespace BetterCheats::Panels::Weapons
 				// none of Damage/Fire Rate/Recoil/Spread/etc. mean anything for a
 				// thrown charge, and neither do the gun presets above (they index
 				// into kAttrs by attribute, all meaningless here).
-				imgui->TextDisabled("Damage, blast radius, fuse time and throw force aren't reachable in\n"
-				                    "this game version -- only charge cost and charge count can be changed here.");
+				imgui->TextDisabled("Damage isn't changeable yet -- its GameplayEffect modifier setup\n"
+				                    "isn't confirmed safe to write blind. Fuse, blast radius and throw\n"
+				                    "force are below.");
 				imgui->Spacing();
 
 				if (imgui->Checkbox("Infinite charges", &profile.infiniteCharges))
@@ -1389,6 +1558,75 @@ namespace BetterCheats::Panels::Weapons
 				}
 				imgui->SameLine(0.0f, -1.0f);
 				imgui->TextDisabled(profile.raw.c_str());
+
+				// Fuse / Blast Radius / Throw Force: global, not per-weapon-type --
+				// shown (and editable) identically on every grenade tab, so "Reset
+				// this weapon to stock" above deliberately leaves these alone; each
+				// row resets itself with its own reset button.
+				imgui->Spacing();
+				imgui->SeparatorText("Blast (applies to every grenade type)");
+
+				if (imgui->BeginTable("##grenade_global_table", 3, kWeaponsTableFlags))
+				{
+					const float globalLabelReserve = BetterCheats::UI::PrescanLabelWidth(imgui, kGrenadeGlobalCount,
+						[](int g) { return kGrenadeGlobals[g].label; });
+
+					imgui->TableSetupColumn("Attribute", BetterCheats::UI::kColumnWidthFixed,
+						BetterCheats::UI::GetReadoutColumnWidth(imgui, globalLabelReserve));
+					imgui->TableSetupColumn("Value",     0, 0.54f);
+					imgui->TableSetupColumn("",          0, 0.10f);
+
+					for (int g = 0; g < kGrenadeGlobalCount; ++g)
+					{
+						const GrenadeGlobalDef& def = kGrenadeGlobals[g];
+						const bool resolved = g_grenadeGlobalHandle[g].ok;
+
+						float value = g_grenadeGlobalValue[g].load();
+						const bool active = resolved && BetterCheats::DiffersFromDefault(value, def.defaultValue);
+
+						imgui->PushIDInt(1000 + g);   // offset clear of the kGrenadeRowCount PushIDInt(g) block above
+						imgui->TableNextRow(0, 0.0f);
+
+						const bool showLive = g_showLiveValues.load();
+						char changeDesc[24];
+						if (showLive)
+							BetterCheats::UI::FormatChangeDesc(changeDesc, sizeof(changeDesc),
+								BetterCheats::ComposedAttribute::Mode::Multiply, value);
+
+						BetterCheats::UI::RowSpec spec;
+						spec.label         = def.label;
+						spec.tooltip       = resolved ? def.tooltip
+							: "Not resolved yet -- the grenade projectile/throw ability class hasn't\n"
+							  "loaded in this session. Usually resolves within a few seconds of\n"
+							  "your first grenade throw; check ModLoader.log if it never does.";
+						spec.value         = &value;
+						spec.minValue      = def.minValue;
+						spec.maxValue      = def.maxValue;
+						spec.step          = def.step;
+						spec.format        = def.format;
+						spec.resetValue    = def.defaultValue;
+						spec.active        = active;
+						spec.disableSlider = !resolved;
+						spec.showLive      = showLive && resolved;
+						spec.expected      = g_dbgGrenadeGlobalExpected[g].load();
+						spec.game          = g_dbgGrenadeGlobalGame[g].load();
+						spec.composing     = active;
+						spec.hasBase       = false;
+						spec.unmodified    = active ? g_composedGrenadeGlobal[g].GetGame() : g_dbgGrenadeGlobalGame[g].load();
+						spec.changeDesc    = changeDesc;
+						spec.labelReserve  = globalLabelReserve;
+
+						if (BetterCheats::UI::BuildRow(imgui, spec).changed)
+						{
+							g_grenadeGlobalValue[g].store(value);
+							SessionConfig::Set(std::string("playerWeapons.") + def.key + ".value", value);
+						}
+
+						imgui->PopID();
+					}
+
+					imgui->EndTable();
+				}
 			}
 			else
 			{
