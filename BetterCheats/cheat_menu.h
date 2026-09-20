@@ -49,14 +49,34 @@ namespace BetterCheats
 	public:
 		static void Initialize(IPluginSelf* self);
 		static void Shutdown();
+
+		// The deliberate user action (the toggle key): flips which of
+		// OpenMenu/CloseMenu applies. Every OTHER close source (Escape/Q, the
+		// loader's own OnPanelClosed notification, shutdown) must call
+		// CloseMenu directly, never this -- see OpenMenu/CloseMenu below.
 		static void Toggle();
 		static bool IsOpen() { return s_open; }
 
-		// Escape/Q keybind callback flags a close; OnRender consumes it next frame
-		// so capture is never released inside the same keypress that set it.
+		// Escape/Q keybind callback flags a close; TickPendingClose consumes it
+		// on the next game tick (OnEngineTick), not from the render callback --
+		// see TickPendingClose's definition for why.
 		static void RequestClose();
 
+		// Applies a pending Escape/Q close request. Must be called from the
+		// game tick, never from OnRender -- see its definition for why.
+		static void TickPendingClose();
+
 	private:
+		static void OpenMenu();
+		static void CloseMenu();
+
+		// Applies "closed" to this plugin's own state (s_open false, capture
+		// token released, any in-progress rebind capture cancelled)
+		// idempotently. Every close path funnels through this, never a raw
+		// flip, so a second close signal for an already-closed menu is always
+		// a no-op instead of reopening it.
+		static void ApplyMenuClosed(const char* reason);
+
 		static void OnPanelClosed(PanelHandle handle);
 		static void OnRender(IModLoaderImGui* imgui);
 		static void RenderSidebar(IModLoaderImGui* imgui, float navWidth);

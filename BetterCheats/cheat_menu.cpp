@@ -68,18 +68,16 @@ namespace BetterCheats
 	// -------------------------------------------------------------------------
 
 
+	// The loader's own notification that our panel closed -- its titlebar X,
+	// or (redundantly, harmlessly) our own SetPanelClose call cascading back
+	// here. Never touches the registry itself; only reconciles our side.
 	void CheatMenu::OnPanelClosed(PanelHandle handle)
 	{
-		if (handle == s_panelHandle)
-		{
-			s_open = false;
-			Keybind::CancelCapture();
-			if (s_self && g_inputCaptureToken)
-			{
-				s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
-				g_inputCaptureToken = nullptr;
-			}
-		}
+		if (handle != s_panelHandle)
+			return;
+
+		LOG_DEBUG("CheatMenu::OnPanelClosed: loader reports the panel closed");
+		ApplyMenuClosed("OnPanelClosed");
 	}
 
 	void CheatMenu::Initialize(IPluginSelf* self)
@@ -100,9 +98,7 @@ namespace BetterCheats
 		if (s_panelHandle && s_self)
 		{
 			s_self->hooks->UI->SetPanelClose(s_panelHandle);
-
-			if (g_inputCaptureToken )
-				s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
+			ApplyMenuClosed("Shutdown");
 
 			s_self->hooks->UI->UnregisterOnPanelWindowClosed(OnPanelClosed);
 			s_self->hooks->UI->UnregisterPanel(s_panelHandle);
@@ -111,35 +107,101 @@ namespace BetterCheats
 		s_self = nullptr;
 	}
 
-	void CheatMenu::Toggle()
+	// Idempotent: no-op if already open. Never call this from a close path.
+	void CheatMenu::OpenMenu()
 	{
 		if (!s_panelHandle || !s_self) return;
 
-		const bool opening = !s_open.load();
-		s_open.store(opening);
-		if (opening)
+		if (s_open.exchange(true))
 		{
-			// Drop any close request left over from before the menu opened, so it
-			// can't be consumed on the very first frame it's visible.
-			s_closeRequested.store(false);
-			s_self->hooks->UI->SetPanelOpen(s_panelHandle);
-			g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
+			LOG_DEBUG("CheatMenu::OpenMenu: already open, ignoring");
+			return;
 		}
+
+		// Drop any close request left over from before the menu opened, so it
+		// can't be consumed on the very first frame it's visible.
+		s_closeRequested.store(false);
+		s_self->hooks->UI->SetPanelOpen(s_panelHandle);
+		g_inputCaptureToken = s_self->hooks->UI->AcquireInputCapture();
+		LOG_DEBUG("CheatMenu::OpenMenu: opened, capture token %p", g_inputCaptureToken);
+	}
+
+	// Idempotent: no-op if already closed (ApplyMenuClosed's own guard). Tells
+	// the loader first -- SetPanelClose synchronously cascades into
+	// OnPanelClosed/ApplyMenuClosed when the registry agrees the panel was
+	// open, but calling ApplyMenuClosed here too covers the panel already
+	// having gone stale in the registry for any reason.
+	void CheatMenu::CloseMenu()
+	{
+		if (!s_panelHandle || !s_self) return;
+		if (!s_open.load()) return;
+
+		LOG_DEBUG("CheatMenu::CloseMenu: requesting SetPanelClose");
+		s_self->hooks->UI->SetPanelClose(s_panelHandle);
+		ApplyMenuClosed("CloseMenu");
+	}
+
+	void CheatMenu::ApplyMenuClosed(const char* reason)
+	{
+		if (!s_open.exchange(false))
+		{
+			LOG_DEBUG("CheatMenu::ApplyMenuClosed(%s): already closed, ignoring", reason);
+			return;
+		}
+
+		LOG_DEBUG("CheatMenu::ApplyMenuClosed(%s): closing", reason);
+
+		// A rebind picker left waiting on a panel that is closing would never
+		// get the chance to finish.
+		Keybind::CancelCapture();
+
+		if (g_inputCaptureToken)
+		{
+			LOG_DEBUG("CheatMenu::ApplyMenuClosed(%s): releasing capture token %p", reason, g_inputCaptureToken);
+			if (s_self && s_self->hooks && s_self->hooks->UI)
+				s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
+			g_inputCaptureToken = nullptr;
+		}
+	}
+
+	void CheatMenu::Toggle()
+	{
+		if (s_open.load())
+			CloseMenu();
 		else
-		{
-			Keybind::CancelCapture();
-			s_self->hooks->UI->SetPanelClose(s_panelHandle);
-			s_self->hooks->UI->ReleaseInputCapture(g_inputCaptureToken);
-		}
+			OpenMenu();
 	}
 
 	void CheatMenu::RequestClose()
 	{
 		// Runs on whatever thread fires the Escape/Q keybind — no ImGui/SDK calls
-		// here, just flag the request for OnRender to act on next frame.
-		LOG_DEBUG("CheatMenu: close key received (open: %s)", s_open.load() ? "yes" : "no");
+		// here, just flag the request for TickPendingClose to act on the next
+		// game tick.
+		LOG_DEBUG("CheatMenu::RequestClose: close key received (open: %s)", s_open.load() ? "yes" : "no");
 		if (s_open)
 			s_closeRequested.store(true);
+	}
+
+	// Applies a pending Escape/Q close request. Called from the game tick
+	// (OnEngineTick, plugin.cpp) rather than from OnRender: the loader's
+	// RenderPanelWindows snapshots each panel's isOpen into a local bool
+	// BEFORE calling our render function and writes that same stale local
+	// back to the registry AFTER it returns -- so a SetPanelClose called from
+	// inside our own render callback closes the panel for an instant and the
+	// loader's own snapshot silently reopens it one statement later. That's
+	// the flicker: the window closing and immediately springing back open,
+	// left with a released capture token but a panel the registry still
+	// considers open, which is what stopped Escape/Q from working again
+	// afterwards. Applying the close from the tick instead means it lands on
+	// a call stack RenderPanelWindows is never nested inside, so there is
+	// nothing left for it to stomp.
+	void CheatMenu::TickPendingClose()
+	{
+		if (s_closeRequested.exchange(false))
+		{
+			LOG_DEBUG("CheatMenu::TickPendingClose: applying a pending close request");
+			CloseMenu();
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -163,18 +225,13 @@ namespace BetterCheats
 
 	void CheatMenu::OnRender(IModLoaderImGui* imgui)
 	{
-		// Deferred by a frame (see RequestClose): closing here, not in the keybind
-		// callback, means capture release can't land inside the same keypress
-		// that requested it. Not focus-gated: the owner runs this panel and
-		// BetterDrone together on the same toggle key, so at most one is ever
-		// focused (often neither, until clicked) -- Escape/Q close whichever of
-		// them is open regardless.
-		if (s_closeRequested.exchange(false))
-		{
-			Toggle();
-			return;
-		}
-
+		// A pending Escape/Q close is applied from TickPendingClose (the game
+		// tick), not here -- see its comment for why closing from inside this
+		// render callback caused the close to silently undo itself one frame
+		// later (the loader's RenderPanelWindows snapshots isOpen before this
+		// call and writes that stale snapshot back after it returns). By the
+		// time this runs, the loader will simply not have called it at all for
+		// a frame where the close already landed.
 		float avail_x, avail_y;
 		imgui->GetContentRegionAvail(&avail_x, &avail_y);
 

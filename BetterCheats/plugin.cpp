@@ -88,6 +88,13 @@ static void OnExperienceLoadCompleteOnGameThread(void* /*context*/)
 // whether the menu is currently open.
 static void OnEngineTick(float deltaSeconds)
 {
+	// Applies a pending Escape/Q close request. Must run here, on the game
+	// tick, never from inside the panel's own render callback -- see
+	// CheatMenu::TickPendingClose for why. Runs before the ChimeraMain/cheats
+	// gate below: closing the menu must still work even if the player left
+	// single-player or the world unloaded out from under an open panel.
+	BetterCheats::CheatMenu::TickPendingClose();
+
 	if (!BetterCheats::GameContext::IsInChimeraMain())
 		return;
 
