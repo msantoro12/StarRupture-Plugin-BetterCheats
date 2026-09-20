@@ -3,15 +3,25 @@
 #include "game_context.h"
 #include "session_config.h"
 #include "player_lookup.h"
+#include "item_registry.h"
+#include "attribute_compose.h"
+#include "cheat_math.h"
+#include "ui_widgets.h"
+#include "game_thread.h"
 
 #include "Chimera_classes.hpp"
 #include "ChimeraUI_classes.hpp"
 #include "WBP_InventorySlot_classes.hpp"
+#include "AuItems_classes.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 // Resizing the player inventory is generated-SDK only: no AOB patterns, no
 // detours. The grid itself is one UFUNCTION call; the slot widgets are plain
@@ -674,6 +684,523 @@ namespace BetterCheats::Panels::Inventory
 
 			return changed;
 		}
+
+		// =====================================================================
+		// Item stack sizes (gss.17). UAuItemDataBase::MaxStack is a plain int32
+		// on the item TYPE's own CDO (AuItems_classes.hpp:290) -- same per-
+		// type-CDO shape as the weapon magazine/grenade fields in
+		// player_weapons.cpp, so it uses the exact same capture/write/restore/
+		// persist machinery (ComposedAttribute + ApplyComposedRow, now shared
+		// via attribute_compose.h). Enumeration reuses item_registry.h's
+		// asset-registry pass -- the same one player_items.cpp uses -- rather
+		// than re-scanning independently.
+		//
+		// Two lists, deliberately not one: g_stackItems is render-thread owned
+		// (adopted only from RenderImGui, like player_items.cpp's g_items) for
+		// the UI; g_stackItemsGameThread is a separate copy written only by the
+		// game-thread scan callback and read only from Tick()/ApplyStackSizes()
+		// -- the apply pass writes real UObject fields and must never touch the
+		// render-thread copy without a lock it doesn't otherwise need.
+		// =====================================================================
+
+		struct StackEntry
+		{
+			SDK::UAuItemDataBase* item             = nullptr;
+			SDK::FAssetData         assetData;         // re-resolve fresh before a write -- item_registry.h
+			std::string             uniqueName;        // item->UniqueItemName, the identity key
+			std::string             name;              // display name
+			int                     originalMaxStack = 1;  // captured at scan time, the true base
+			bool                    canStack         = true; // StackingType != DoNotStack
+		};
+
+		std::mutex               g_pendingStackMutex;
+		std::vector<StackEntry>  g_pendingStackItems;
+		bool                     g_pendingStackReady = false;
+		std::atomic<bool>        g_stackRefreshInFlight{ false };
+
+		std::vector<StackEntry>  g_stackItems;          // render-thread owned (UI)
+		bool                     g_stackItemsLoaded  = false;
+		std::vector<StackEntry>  g_stackItemsGameThread; // game-thread owned (apply pass)
+
+		char                     g_stackSearchBuf[128] = {};
+		std::vector<int>         g_filteredStackIndices;
+		bool                     g_onlyShowChangedStacks = false;
+
+		constexpr int   kStackFloor      = 1;
+		constexpr int   kStackCeiling    = 1000000;  // sanity clamp on the multiplier's result --
+		                                              // same spirit as player_weapons.cpp's kMagazineCeiling
+		constexpr float kStackMultDefault = 1.0f;
+		constexpr float kStackMultMin     = 0.10f;
+		constexpr float kStackMultMax     = 20.0f;
+
+		std::atomic<float> g_stackMultiplier{ kStackMultDefault };
+
+		// Per-item override, keyed by the item's true UniqueItemName (an exact
+		// in-memory key, distinct from the sanitized string used for
+		// SessionConfig paths below). Absent = no override, follow the global
+		// multiplier. Guarded because RenderImGui (render thread) writes it and
+		// Tick() (game thread) reads it every tick.
+		std::mutex                           g_overrideMutex;
+		std::unordered_map<std::string, int> g_stackOverrides;
+
+		// Per-item compose state, game-thread only -- never touched from
+		// RenderImGui. `item` is set the first time ApplyStackSizes() visits an
+		// entry, so Shutdown() can Release() without depending on
+		// g_stackItemsGameThread still matching by the time it runs.
+		struct StackComposeState
+		{
+			BetterCheats::ComposedAttribute composed;
+			SDK::UAuItemDataBase*           item = nullptr;
+		};
+		std::unordered_map<std::string, StackComposeState> g_stackComposed;
+
+		std::string ToLowerAsciiStack(const std::string& s)
+		{
+			std::string out = s;
+			for (char& c : out)
+				if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+			return out;
+		}
+
+		// Config-path-safe key -- UniqueItemName is expected to already be a
+		// plain identifier, but sanitizing (mirroring player_weapons.cpp's own
+		// Sanitize()) means a stray '.' can never split a SessionConfig path in
+		// two. The in-memory maps above key on the exact name instead: they
+		// don't build dot-paths, so nothing to protect there.
+		std::string SanitizeStackKey(const std::string& raw)
+		{
+			std::string out;
+			for (char c : ToLowerAsciiStack(raw))
+				if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) out += c;
+			return out.empty() ? "unknown" : out;
+		}
+
+		int ClampStackValue(int value)
+		{
+			if (value < kStackFloor)   return kStackFloor;
+			if (value > kStackCeiling) return kStackCeiling;
+			return value;
+		}
+
+		int MultiplierDefaultFor(int originalMaxStack, float multiplier)
+		{
+			return ClampStackValue(static_cast<int>(static_cast<float>(originalMaxStack) * multiplier + 0.5f));
+		}
+
+		int EffectiveStackFor(const StackEntry& e, float multiplier, const std::unordered_map<std::string, int>& overrides)
+		{
+			auto it = overrides.find(e.uniqueName);
+			if (it != overrides.end())
+				return ClampStackValue(it->second);
+			return MultiplierDefaultFor(e.originalMaxStack, multiplier);
+		}
+
+		// Persisted as one array of {uniqueName, value} objects -- the same
+		// shape player_weapons.cpp's PersistKnownWeapons uses for its "known
+		// weapons" list -- rather than a nested object keyed by item name.
+		// SessionConfig's Set/Get only do dot-path traversal (session_config.cpp
+		// naively swaps '.' for '/' building a JSON pointer, with no escaping),
+		// so a raw UniqueItemName used AS a path segment would corrupt the tree
+		// if it ever contained a '.'; keeping it as a plain string VALUE inside
+		// an array sidesteps that entirely, and round-trips the exact name
+		// (a sanitized-for-path key could never recover it losslessly).
+		void PersistStackOverrides()
+		{
+			std::unordered_map<std::string, int> snapshot;
+			{
+				std::lock_guard<std::mutex> lock(g_overrideMutex);
+				snapshot = g_stackOverrides;
+			}
+
+			nlohmann::json arr = nlohmann::json::array();
+			for (const auto& kv : snapshot)
+				arr.push_back({ {"uniqueName", kv.first}, {"value", kv.second} });
+			SessionConfig::Set("playerInventory.stacks.overrides", arr);
+		}
+
+		void SetStackOverride(const std::string& uniqueName, int value)
+		{
+			{
+				std::lock_guard<std::mutex> lock(g_overrideMutex);
+				g_stackOverrides[uniqueName] = value;
+			}
+			PersistStackOverrides();
+		}
+
+		void ClearStackOverride(const std::string& uniqueName)
+		{
+			{
+				std::lock_guard<std::mutex> lock(g_overrideMutex);
+				g_stackOverrides.erase(uniqueName);
+			}
+			PersistStackOverrides();
+		}
+
+		void RefreshFilteredStackItems()
+		{
+			g_filteredStackIndices.clear();
+
+			const std::string needle     = ToLowerAsciiStack(g_stackSearchBuf);
+			const float       multiplier = g_stackMultiplier.load();
+
+			std::unordered_map<std::string, int> overrides;
+			{
+				std::lock_guard<std::mutex> lock(g_overrideMutex);
+				overrides = g_stackOverrides;
+			}
+
+			for (int i = 0; i < static_cast<int>(g_stackItems.size()); ++i)
+			{
+				const StackEntry& e = g_stackItems[i];
+				if (!needle.empty() && ToLowerAsciiStack(e.name).find(needle) == std::string::npos)
+					continue;
+
+				if (g_onlyShowChangedStacks)
+				{
+					const int effective = EffectiveStackFor(e, multiplier, overrides);
+					if (effective == e.originalMaxStack)
+						continue;
+				}
+
+				g_filteredStackIndices.push_back(i);
+			}
+		}
+
+		// Mirrors player_items.cpp's own scan (same asset-registry pass, via
+		// item_registry.h) but without icon resolution -- Inventory only cares
+		// about MaxStack/StackingType/UniqueItemName, and every item type
+		// should be configurable here regardless of whether Item Spawner would
+		// want to display it (icon-less items still stack).
+		void RefreshStackListOnGameThread(void* /*context*/)
+		{
+			std::vector<StackEntry> items;
+
+			LOG_INFO("Inventory: refreshing item list for stack sizes from the asset registry...");
+
+			try
+			{
+				SDK::IAssetRegistry* registry = BetterCheats::ItemRegistry::GetAssetRegistry();
+				if (!registry)
+				{
+					LOG_WARN("Inventory: could not resolve the asset registry for stack sizes.");
+				}
+				else
+				{
+					SDK::TArray<SDK::FAssetData> assetData;
+					if (!BetterCheats::ItemRegistry::GetAssetsByClass(registry,
+						BetterCheats::ItemRegistry::ItemBlueprintClassPath(), assetData))
+					{
+						LOG_WARN("Inventory: IAssetRegistry::GetAssetsByClass failed for stack sizes.");
+					}
+
+					const int rawCount = assetData.Num();
+					int unresolvedCount = 0;
+
+					for (int i = 0; i < rawCount; ++i)
+					{
+						SDK::UAuItemDataBase* item = BetterCheats::ItemRegistry::ResolveItemFromBlueprintAsset(assetData[i], false);
+						if (!item) { ++unresolvedCount; continue; }
+
+						StackEntry entry;
+						entry.item       = item;
+						entry.assetData  = assetData[i];
+						entry.uniqueName = item->UniqueItemName.ToString();
+						entry.name       = SDK::UKismetTextLibrary::Conv_TextToString(item->ItemName).ToString();
+						if (entry.name.empty() || entry.name == "<MISSING STRING TABLE ENTRY>")
+							entry.name = entry.uniqueName;
+
+						// Same placeholder/Blueprint-asset filtering player_items.cpp uses.
+						if (entry.name == "None") continue;
+						if (entry.name.size() >= 9 && entry.name.compare(entry.name.size() - 9, 9, "Blueprint") == 0)
+							continue;
+						if (entry.uniqueName.empty()) continue;   // nothing to key an override against
+
+						entry.originalMaxStack = item->MaxStack > 0 ? item->MaxStack : 1;
+						entry.canStack          = item->StackingType != SDK::ENxItemStackType::DoNotStack;
+
+						items.push_back(std::move(entry));
+					}
+
+					if (unresolvedCount > 0)
+						LOG_INFO("Inventory: %d Blueprint asset(s) could not be resolved for stack sizes.", unresolvedCount);
+
+					std::sort(items.begin(), items.end(),
+						[](const StackEntry& a, const StackEntry& b) { return a.name < b.name; });
+
+					LOG_INFO("Inventory: loaded %d item type(s) for stack sizes.", static_cast<int>(items.size()));
+				}
+			}
+			catch (...)
+			{
+				LOG_DEBUG("Inventory: exception while resolving items for stack sizes.");
+			}
+
+			// Game-thread copy for the apply pass, ahead of the render-thread
+			// hand-off below -- Tick() must never block on g_pendingStackMutex.
+			g_stackItemsGameThread = items;
+
+			std::lock_guard<std::mutex> lock(g_pendingStackMutex);
+			g_pendingStackItems = std::move(items);
+			g_pendingStackReady = true;
+			g_stackRefreshInFlight.store(false, std::memory_order_release);
+		}
+
+		void RequestRefreshStackList()
+		{
+			bool expected = false;
+			if (!g_stackRefreshInFlight.compare_exchange_strong(expected, true))
+				return;
+
+			IPluginHooks* hooks = GetHooks();
+			if (!hooks)
+			{
+				g_stackRefreshInFlight.store(false, std::memory_order_release);
+				return;
+			}
+
+			hooks->Engine->PostToGameThread(&RefreshStackListOnGameThread, nullptr);
+		}
+
+		void AdoptPendingStackItemsIfReady()
+		{
+			std::vector<StackEntry> incoming;
+			{
+				std::lock_guard<std::mutex> lock(g_pendingStackMutex);
+				if (!g_pendingStackReady)
+					return;
+				incoming = std::move(g_pendingStackItems);
+				g_pendingStackItems.clear();
+				g_pendingStackReady = false;
+			}
+
+			g_stackItems       = std::move(incoming);
+			g_stackItemsLoaded = true;
+			RefreshFilteredStackItems();
+		}
+
+		// Game thread only. Writes MaxStack for every stackable item whose
+		// effective value (override, or the global multiplier applied to its
+		// captured original) differs from that original -- never touches
+		// DoNotStack items at all. Cheap: this walks the already-resolved list,
+		// no asset-registry work here, so running it every tick is fine.
+		void ApplyStackSizes()
+		{
+			if (g_stackItemsGameThread.empty())
+				return;
+
+			const float multiplier = g_stackMultiplier.load();
+			std::unordered_map<std::string, int> overrides;
+			{
+				std::lock_guard<std::mutex> lock(g_overrideMutex);
+				overrides = g_stackOverrides;
+			}
+
+			try
+			{
+				for (const StackEntry& e : g_stackItemsGameThread)
+				{
+					if (!e.item || !e.canStack)
+						continue;
+
+					const int  desired = EffectiveStackFor(e, multiplier, overrides);
+					const bool active  = desired != e.originalMaxStack;
+
+					StackComposeState& state = g_stackComposed[e.uniqueName];
+					state.item = e.item;
+
+					float valueF = static_cast<float>(e.item->MaxStack);
+					const std::string key = "playerInventory.stacks." + SanitizeStackKey(e.uniqueName);
+
+					BetterCheats::ApplyComposedRow(state.composed, e.item, valueF, key, active,
+						static_cast<float>(desired), BetterCheats::ComposedAttribute::Mode::Absolute,
+						static_cast<float>(kStackFloor), static_cast<float>(kStackCeiling));
+
+					const int newValue = static_cast<int>(valueF + 0.5f);
+					if (e.item->MaxStack != newValue)
+						e.item->MaxStack = newValue;
+				}
+			}
+			catch (...) {}
+		}
+
+		// Render thread. Global multiplier row, search + "only show changed"
+		// filter, then a scrolled table of every filtered item -- follows the
+		// same shared-row-helper shape as player_weapons.cpp's tables, and the
+		// same scrolled-list-with-a-search-box shape as player_items.cpp's Item
+		// Spawner. g_filteredStackIndices is only ever rebuilt on an actual
+		// input change (search text, filter toggle, multiplier, an override),
+		// never every frame -- "hundreds of items" is fine to filter on demand,
+        // not fine to re-filter every single frame for no reason.
+		void RenderItemStackSizes(IModLoaderImGui* imgui)
+		{
+			imgui->Spacing();
+			imgui->Separator();
+			imgui->SeparatorText("Item Stack Sizes");
+			imgui->TextDisabled("Applies to new stacks only -- items already stacked keep their\n"
+			                    "current cap until picked up, split, or merged again. Items that\n"
+			                    "don't stack at all are shown but can't be changed here.");
+			imgui->Spacing();
+
+			AdoptPendingStackItemsIfReady();
+			if (!g_stackItemsLoaded)
+				RequestRefreshStackList();
+
+			if (!g_stackItemsLoaded)
+			{
+				imgui->TextDisabled("Loading item list from the asset registry...");
+				return;
+			}
+
+			// ---- global multiplier -------------------------------------------
+			float multiplier = g_stackMultiplier.load();
+			if (imgui->BeginTable("##stack_mult_table", 3, kTableFlags))
+			{
+				const float multLabelReserve = BetterCheats::UI::PrescanLabelWidth(imgui, 1,
+					[](int) { return "Stack size multiplier"; });
+
+				imgui->TableSetupColumn("Attribute", kColumnFixed,
+					BetterCheats::UI::GetReadoutColumnWidth(imgui, multLabelReserve));
+				imgui->TableSetupColumn("Value", 0, 0.54f);
+				imgui->TableSetupColumn("",      0, 0.10f);
+
+				imgui->TableNextRow(0, 0.0f);
+
+				BetterCheats::UI::RowSpec spec;
+				spec.label        = "Stack size multiplier";
+				spec.tooltip      = "Multiplies every stackable item's captured original MaxStack.\n"
+				                    "A per-item override below replaces this for that one item.";
+				spec.value        = &multiplier;
+				spec.minValue     = kStackMultMin;
+				spec.maxValue     = kStackMultMax;
+				spec.step         = 0.10f;
+				spec.format       = "%.2fx";
+				spec.resetValue   = kStackMultDefault;
+				spec.active       = BetterCheats::DiffersFromDefault(multiplier, kStackMultDefault);
+				spec.labelReserve = multLabelReserve;
+
+				if (BetterCheats::UI::BuildRow(imgui, spec).changed)
+				{
+					g_stackMultiplier.store(multiplier);
+					SessionConfig::Set("playerInventory.stacks.multiplier", multiplier);
+					RefreshFilteredStackItems();
+				}
+
+				imgui->EndTable();
+			}
+
+			imgui->Spacing();
+
+			// ---- search + filter ----------------------------------------------
+			char searchHint[64];
+			snprintf(searchHint, sizeof(searchHint), "Search %d items...", static_cast<int>(g_stackItems.size()));
+			imgui->SetNextItemWidth(-1.0f);
+			if (imgui->InputTextWithHint("##stack_search", searchHint, g_stackSearchBuf, sizeof(g_stackSearchBuf)))
+				RefreshFilteredStackItems();
+
+			bool onlyChanged = g_onlyShowChangedStacks;
+			if (imgui->Checkbox("Only show changed", &onlyChanged))
+			{
+				g_onlyShowChangedStacks = onlyChanged;
+				RefreshFilteredStackItems();
+			}
+
+			imgui->Spacing();
+
+			if (g_stackItems.empty())
+			{
+				imgui->TextDisabled("No stackable item types found.");
+				return;
+			}
+			if (g_filteredStackIndices.empty())
+			{
+				imgui->TextDisabled("No items match.");
+				return;
+			}
+
+			// ---- per-item list --------------------------------------------------
+			float availX = 0.0f, availY = 0.0f;
+			imgui->GetContentRegionAvail(&availX, &availY);
+			const float listH = availY > 150.0f ? availY : 150.0f;
+
+			std::unordered_map<std::string, int> overrides;
+			{
+				std::lock_guard<std::mutex> lock(g_overrideMutex);
+				overrides = g_stackOverrides;
+			}
+			const float mult = g_stackMultiplier.load();
+
+			if (imgui->BeginChild("##stack_item_list", -1.0f, listH, false))
+			{
+				const float itemLabelReserve = BetterCheats::UI::PrescanLabelWidth(imgui,
+					static_cast<int>(g_filteredStackIndices.size()),
+					[](int i) { return g_stackItems[g_filteredStackIndices[i]].name.c_str(); });
+
+				// RefreshFilteredStackItems() rebuilds g_filteredStackIndices in
+				// place -- calling it while the range-for below is still iterating
+				// that same vector would invalidate the iterator mid-loop. Defer to
+				// after the loop instead.
+				bool needsRefilter = false;
+
+				if (imgui->BeginTable("##stack_item_table", 3, kTableFlags))
+				{
+					imgui->TableSetupColumn("Attribute", kColumnFixed,
+						BetterCheats::UI::GetReadoutColumnWidth(imgui, itemLabelReserve));
+					imgui->TableSetupColumn("Value", 0, 0.54f);
+					imgui->TableSetupColumn("",      0, 0.10f);
+
+					for (int filteredIndex : g_filteredStackIndices)
+					{
+						StackEntry& e = g_stackItems[filteredIndex];
+
+						const int   multDefault  = MultiplierDefaultFor(e.originalMaxStack, mult);
+						const auto  overrideIt   = overrides.find(e.uniqueName);
+						const bool  hasOverride  = overrideIt != overrides.end();
+						float       rowValue     = static_cast<float>(hasOverride ? overrideIt->second : multDefault);
+
+						imgui->PushIDStr(e.uniqueName.c_str());
+						imgui->TableNextRow(0, 0.0f);
+
+						char tooltip[256];
+						snprintf(tooltip, sizeof(tooltip), "Original: %d. %s",
+							e.originalMaxStack,
+							e.canStack ? "Drag to override just this item, independent of the\nmultiplier above."
+							           : "This item does not stack (StackingType is DoNotStack) --\nMaxStack is left untouched.");
+
+						BetterCheats::UI::RowSpec spec;
+						spec.label        = e.name.c_str();
+						spec.tooltip      = tooltip;
+						spec.value        = &rowValue;
+						spec.minValue     = static_cast<float>(kStackFloor);
+						spec.maxValue     = static_cast<float>(kStackCeiling);
+						spec.step         = 1.0f;
+						spec.format       = "%.0f";
+						spec.resetValue   = static_cast<float>(multDefault);
+						spec.active       = e.canStack && (hasOverride || multDefault != e.originalMaxStack);
+						spec.disableSlider = !e.canStack;
+						spec.labelReserve = itemLabelReserve;
+
+						const BetterCheats::UI::RowResult result = BetterCheats::UI::BuildRow(imgui, spec);
+						if (result.changed && e.canStack)
+						{
+							const int newInt = ClampStackValue(static_cast<int>(rowValue + 0.5f));
+							if (result.resetClicked || newInt == multDefault)
+								ClearStackOverride(e.uniqueName);
+							else
+								SetStackOverride(e.uniqueName, newInt);
+							needsRefilter = true;
+						}
+
+						imgui->PopID();
+					}
+
+					imgui->EndTable();
+				}
+
+				if (needsRefilter)
+					RefreshFilteredStackItems();
+			}
+			imgui->EndChild();
+		}
 	}
 
 	void Initialize()
@@ -717,13 +1244,49 @@ namespace BetterCheats::Panels::Inventory
 		g_commandRegistered = false;
 
 		ForgetWidgets();
+
+		// Item stack sizes: same render-thread-Shutdown hazard gss.15 fixed for
+		// weapons (reviews/weapon-stats-and-reload.md Q3) -- the loader's own
+		// RELOAD button runs PluginShutdown from its D3D Present hook, not the
+		// game thread Tick() recorded, and every UObject touch below
+		// intermittently crashes there. Forget instead of Release off-thread:
+		// SessionConfig still has whatever RestoreIfStale needs to undo a
+		// leftover write on the next activation, off-thread or not.
+		if (!BetterCheats::IsGameThread())
+		{
+			for (auto& kv : g_stackComposed)
+				kv.second.composed.Forget();
+			return;
+		}
+
+		try
+		{
+			for (auto& kv : g_stackComposed)
+			{
+				StackComposeState& state = kv.second;
+				if (!state.item) continue;
+
+				float valueF = static_cast<float>(state.item->MaxStack);
+				state.composed.Release(state.item, valueF);
+				const int newValue = static_cast<int>(valueF + 0.5f);
+				if (state.item->MaxStack != newValue)
+					state.item->MaxStack = newValue;
+
+				BetterCheats::ClearComposeState("playerInventory.stacks." + SanitizeStackKey(kv.first));
+			}
+		}
+		catch (...) {}
 	}
 
 	void Tick(float deltaSeconds)
 	{
+		BetterCheats::RecordGameThread();
+
 		ApplyPendingResize();
 		MaintainGrid(deltaSeconds);
 		RefreshSnapshot();
+
+		ApplyStackSizes();
 	}
 
 	void ApplySavedConfig()
@@ -758,6 +1321,36 @@ namespace BetterCheats::Panels::Inventory
 		g_baseSlotHeight = 0.0f;
 		g_container      = nullptr;
 		g_containerIndex = -1;
+
+		// Item stack sizes.
+		g_stackMultiplier.store(SessionConfig::Get("playerInventory.stacks.multiplier", kStackMultDefault));
+
+		{
+			std::unordered_map<std::string, int> loaded;
+			const nlohmann::json arr = SessionConfig::Get("playerInventory.stacks.overrides", nlohmann::json::array());
+			if (arr.is_array())
+			{
+				for (const auto& e : arr)
+				{
+					const std::string uniqueName = e.value("uniqueName", std::string());
+					if (uniqueName.empty() || !e.contains("value") || !e["value"].is_number())
+						continue;
+					loaded[uniqueName] = e["value"].get<int>();
+				}
+			}
+			std::lock_guard<std::mutex> lock(g_overrideMutex);
+			g_stackOverrides = std::move(loaded);
+		}
+
+		// A new session's item CDOs are the same static assets, but a fresh
+		// scan is the only way to know their true original MaxStack before
+		// this session's Tick() writes anything -- ApplyStackSizes() will
+		// RestoreIfStale-recover from a leftover write left by an unclean
+		// reload of a PREVIOUS session, but never from a genuine session
+		// change, which is exactly what just happened.
+		g_stackItemsGameThread.clear();
+		g_stackComposed.clear();
+		RequestRefreshStackList();
 	}
 
 	void RenderImGui(IModLoaderImGui* imgui)
@@ -880,5 +1473,7 @@ namespace BetterCheats::Panels::Inventory
 
 		imgui->Spacing();
 		imgui->TextDisabled("Console: bc_invsize <columns> <rows>");
+
+		RenderItemStackSizes(imgui);
 	}
 }

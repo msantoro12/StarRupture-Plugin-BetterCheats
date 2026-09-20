@@ -100,6 +100,9 @@
     <ClInclude Include="player_lookup.h">
       <Filter>Plugin Core\Helpers</Filter>
     </ClInclude>
+    <ClInclude Include="item_registry.h">
+      <Filter>Plugin Core\Helpers</Filter>
+    </ClInclude>
 
     <!-- ThirdParty -->
     <ClInclude Include="json.hpp">
@@ -235,6 +238,9 @@
       <Filter>Plugin Core\Helpers</Filter>
     </ClCompile>
     <ClCompile Include="attribute_compose.cpp">
+      <Filter>Plugin Core\Helpers</Filter>
+    </ClCompile>
+    <ClCompile Include="item_registry.cpp">
       <Filter>Plugin Core\Helpers</Filter>
     </ClCompile>
 

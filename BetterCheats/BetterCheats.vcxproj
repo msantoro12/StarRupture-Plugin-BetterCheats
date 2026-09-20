@@ -112,6 +112,7 @@
     <ClCompile Include="attribute_compose.cpp" />
     <ClCompile Include="cheat_menu.cpp" />
     <ClCompile Include="game_context.cpp" />
+    <ClCompile Include="item_registry.cpp" />
     <ClCompile Include="keybind_picker.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="panel_enemies.cpp" />
@@ -145,6 +146,7 @@
     <ClInclude Include="cheat_menu.h" />
     <ClInclude Include="game_thread.h" />
     <ClInclude Include="game_context.h" />
+    <ClInclude Include="item_registry.h" />
     <ClInclude Include="keybind_picker.h" />
     <ClInclude Include="panel_enemies.h" />
     <ClInclude Include="enemies.h" />
