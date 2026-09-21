@@ -323,6 +323,95 @@ namespace BetterCheats::Panels::Weapons
 			return true;
 		}
 
+		// One-shot diagnostic (gss.20): dumps the grenade damage GameplayEffect's
+		// modifier shape to the log so a future build can target the real
+		// index/field with actual data instead of guessing -- see
+		// reviews/grenade-reachability.md Q3 ("first thing to test in-game").
+		// UGE_GrenadeProjectileDamage_C's own declared size is 0x0000 (all data
+		// inherited from the native UGameplayEffect base), so casting the
+		// resolved CDO straight to SDK::UGameplayEffect* is safe: unlike
+		// BP_GrenadeProjectile_C/GA_ThrowGrenade_C, UGameplayEffect is a stable
+		// ENGINE struct already identical in this project's Client SDK -- no
+		// Server/Client layout risk, no by-name property lookup needed.
+		// Read-only: never writes anything, and every pointer is guarded so an
+		// unexpected shape logs a warning instead of crashing.
+		bool  g_probedGrenadeDamage = false;
+		bool  g_grenadeDamageCdoMissLogged = false;
+		float g_grenadeDamageProbeCooldown = 0.0f;
+
+		void ProbeGrenadeDamageOnce(float deltaSeconds)
+		{
+			if (g_probedGrenadeDamage) return;
+
+			g_grenadeDamageProbeCooldown -= deltaSeconds;
+			if (g_grenadeDamageProbeCooldown > 0.0f) return;
+			g_grenadeDamageProbeCooldown = kGrenadeGlobalRetryInterval;
+
+			IPluginHooks* hooks = GetHooks();
+			IPluginObjectWalker* walker = hooks ? hooks->ObjectWalker : nullptr;
+			if (!walker || !walker->IsReady())
+				return;   // not ready yet -- try again next cooldown
+
+			void* object = walker->FindFirstObjectByName("Default__GE_GrenadeProjectileDamage_C");
+			if (!object)
+			{
+				if (!g_grenadeDamageCdoMissLogged)
+				{
+					LOG_DEBUG("GrenadeDamageProbe: CDO 'Default__GE_GrenadeProjectileDamage_C' not found yet.");
+					g_grenadeDamageCdoMissLogged = true;
+				}
+				return;   // may still load later (grenade ability not granted yet) -- keep retrying
+			}
+
+			g_probedGrenadeDamage = true;   // one real attempt, success or not -- this isn't going to change shape
+
+			try
+			{
+				SDK::UGameplayEffect* ge = reinterpret_cast<SDK::UGameplayEffect*>(object);
+				if (!ge)
+				{
+					LOG_WARN("GrenadeDamageProbe: resolved object was null after cast.");
+					return;
+				}
+
+				std::string objectName = "<unreadable>";
+				try { objectName = ge->GetName(); } catch (...) {}
+
+				const int modifierCount = ge->Modifiers.Num();
+				LOG_INFO("GrenadeDamageProbe: object='%s' modifierCount=%d", objectName.c_str(), modifierCount);
+
+				for (int i = 0; i < modifierCount; ++i)
+				{
+					const SDK::FGameplayModifierInfo& mod = ge->Modifiers[i];
+
+					std::string attrName = "<unreadable>";
+					try { attrName = mod.Attribute.AttributeName.ToString(); } catch (...) {}
+
+					const auto modOp    = mod.ModifierOp;
+					const auto calcType = mod.ModifierMagnitude.MagnitudeCalculationType;
+
+					LOG_INFO("GrenadeDamageProbe:   [%d] attribute='%s' modifierOp=%d magnitudeCalculationType=%d",
+						i, attrName.c_str(), static_cast<int>(modOp), static_cast<int>(calcType));
+
+					if (calcType == SDK::EGameplayEffectMagnitudeCalculation::ScalableFloat)
+					{
+						const SDK::FScalableFloat& sf = mod.ModifierMagnitude.ScalableFloatMagnitude;
+						std::string rowName = "<none>";
+						try { if (sf.Curve.CurveTable) rowName = sf.Curve.RowName.ToString(); } catch (...) {}
+						LOG_INFO("GrenadeDamageProbe:   [%d] scalableFloat.Value=%.4f curveTable=%p curveRow='%s'",
+							i, sf.Value, reinterpret_cast<void*>(sf.Curve.CurveTable), rowName.c_str());
+					}
+				}
+
+				if (modifierCount == 0)
+					LOG_INFO("GrenadeDamageProbe: Modifiers is empty -- damage may come from Executions instead, or this GE isn't the right one.");
+			}
+			catch (...)
+			{
+				LOG_WARN("GrenadeDamageProbe: exception while reading the GameplayEffect -- its shape may differ from what was expected.");
+			}
+		}
+
 		// Profiles are DISCOVERED, not hardcoded. Weapon data assets live in the paks
 		// (no I_*DataItem_C classes exist in the SDK dump), so the only truthful source
 		// of the roster is what the player actually equips.
@@ -1083,6 +1172,8 @@ namespace BetterCheats::Panels::Weapons
 						props->SetFloatProperty(h.object, h.property, static_cast<double>(valueF));
 				}
 			}
+
+			ProbeGrenadeDamageOnce(deltaSeconds);
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
 			// tick if written directly; the unreplicated Cr multiplier is what sticks.
