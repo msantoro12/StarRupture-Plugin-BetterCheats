@@ -103,6 +103,9 @@
     <ClInclude Include="item_registry.h">
       <Filter>Plugin Core\Helpers</Filter>
     </ClInclude>
+    <ClInclude Include="preset_store.h">
+      <Filter>Plugin Core\Helpers</Filter>
+    </ClInclude>
 
     <!-- ThirdParty -->
     <ClInclude Include="json.hpp">
@@ -241,6 +244,9 @@
       <Filter>Plugin Core\Helpers</Filter>
     </ClCompile>
     <ClCompile Include="item_registry.cpp">
+      <Filter>Plugin Core\Helpers</Filter>
+    </ClCompile>
+    <ClCompile Include="preset_store.cpp">
       <Filter>Plugin Core\Helpers</Filter>
     </ClCompile>
 

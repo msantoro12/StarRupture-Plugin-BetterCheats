@@ -993,6 +993,95 @@ namespace BetterCheats::Panels::Movement
 			LOG_INFO("Movement: applied preset '%s'.", preset.label);
 		}
 
+		// ---------------------------------------------------------------------
+		// Saved presets (gss.21, PresetStore-backed) -- the owner's own tweaks,
+		// named and kept apart from the built-in kPresets above. One "Movement"
+		// group covers every row, GAS and raw, in kAttrs/kRaws index order
+		// (GetLiveMovementFields/ApplyMovementFields must stay in that same
+		// order -- PresetStore::Load matches by key, not position, but both
+		// sides building the same array shape keeps this simple).
+		// ---------------------------------------------------------------------
+
+		constexpr const char* kMovementPresetGroup = "Movement";
+		constexpr int         kMovementFieldCount  = kAttrCount + kRawCount;
+
+		void GetLiveMovementFields(BetterCheats::PresetStore::Field* out)
+		{
+			for (int a = 0; a < kAttrCount; ++a)
+				out[a] = { kAttrs[a].key, g_attrValues[a].load() };
+			for (int r = 0; r < kRawCount; ++r)
+				out[kAttrCount + r] = { kRaws[r].key, g_rawValues[r].load() };
+		}
+
+		void ApplyMovementFields(const BetterCheats::PresetStore::Field* fields, int count)
+		{
+			for (int a = 0; a < kAttrCount && a < count; ++a)
+			{
+				g_attrValues[a].store(fields[a].value);
+				SessionConfig::Set(AttrConfigKey(kAttrs[a].key), fields[a].value);
+			}
+			for (int r = 0; r < kRawCount && (kAttrCount + r) < count; ++r)
+			{
+				g_rawValues[r].store(fields[kAttrCount + r].value);
+				SessionConfig::Set(RawConfigKey(kRaws[r].key), fields[kAttrCount + r].value);
+			}
+			LOG_INFO("Movement: applied a saved preset.");
+		}
+
+		bool IsBuiltinMovementName(const char* name)
+		{
+			for (int i = 0; i < kPresetCount; ++i)
+				if (strcmp(kPresets[i].label, name) == 0)
+					return true;
+			return false;
+		}
+
+		// True only if every field the preset touches matches AND every field
+		// it doesn't touch is still at its own default -- a hand-tweaked mix
+		// that happens to overlap one preset's values isn't that preset.
+		bool MatchesBuiltinMovementPreset(const Preset& preset)
+		{
+			bool touchedAttr[kAttrCount] = {};
+			bool touchedRaw[kRawCount]   = {};
+
+			for (const PresetVal& v : preset.vals)
+			{
+				if (v.attr < 0) break;
+				if (std::fabs(g_attrValues[v.attr].load() - v.value) > BetterCheats::kActiveEpsilon)
+					return false;
+				touchedAttr[v.attr] = true;
+			}
+			for (const PresetRaw& r : preset.raws)
+			{
+				if (r.raw < 0) break;
+				if (std::fabs(g_rawValues[r.raw].load() - r.value) > BetterCheats::kActiveEpsilon)
+					return false;
+				touchedRaw[r.raw] = true;
+			}
+			for (int a = 0; a < kAttrCount; ++a)
+				if (!touchedAttr[a] && BetterCheats::DiffersFromDefault(g_attrValues[a].load(), kAttrs[a].defaultValue))
+					return false;
+			for (int r = 0; r < kRawCount; ++r)
+				if (!touchedRaw[r] && BetterCheats::DiffersFromDefault(g_rawValues[r].load(), 1.0f))
+					return false;
+			return true;
+		}
+
+		void ComputeMovementSuggestedBase(char* out, int cap)
+		{
+			for (int i = 0; i < kPresetCount; ++i)
+			{
+				if (MatchesBuiltinMovementPreset(kPresets[i]))
+				{
+					snprintf(out, cap, "%s Custom", kPresets[i].label);
+					return;
+				}
+			}
+			snprintf(out, cap, "Custom");
+		}
+
+		BetterCheats::UI::SavedPresetRowState s_movementPresetRow;
+
 		// One row: label (dimmed at default, + optional disclosure arrow/indent) +
 		// live-values readout + joined slider/box + drawn reset button -- see
 		// ui_widgets.h's BuildRow, which does the actual drawing.
@@ -1624,6 +1713,15 @@ namespace BetterCheats::Panels::Movement
 					preset.credit ? preset.credit : "");
 				imgui->SetTooltip(tip);
 			}
+		}
+
+		imgui->Spacing();
+		{
+			BetterCheats::PresetStore::Field fields[kMovementFieldCount];
+			BetterCheats::UI::RenderSavedPresetsRow(imgui, "movement_saved_presets", kMovementPresetGroup,
+				fields, kMovementFieldCount,
+				&GetLiveMovementFields, &ApplyMovementFields,
+				&IsBuiltinMovementName, &ComputeMovementSuggestedBase, s_movementPresetRow);
 		}
 
 		// ---- tuning rows --------------------------------------------------------
