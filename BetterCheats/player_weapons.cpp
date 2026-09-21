@@ -1573,6 +1573,42 @@ namespace BetterCheats::Panels::Weapons
 				imgui->TextDisabled("Damage isn't changeable yet -- its GameplayEffect modifier setup\n"
 				                    "isn't confirmed safe to write blind. Fuse, blast radius and throw\n"
 				                    "force are below.");
+
+				// Saved presets sit directly under the built-ins (none exist for
+				// grenades) and above every control, same position in every group.
+				imgui->Spacing();
+				{
+					constexpr int kGrenadePresetFieldCount = kGrenadeRowCount + 1; // + infiniteCharges
+					BetterCheats::PresetStore::Field presetFields[kGrenadePresetFieldCount];
+					const std::string presetGroup = std::string("Weapon:") + profile.key;
+
+					auto getLive = [&profile](BetterCheats::PresetStore::Field* out)
+					{
+						for (int g = 0; g < kGrenadeRowCount; ++g)
+							out[g] = { kGrenadeRows[g].key, profile.grenadeValues[g] };
+						out[kGrenadeRowCount] = { "infiniteCharges", profile.infiniteCharges ? 1.0f : 0.0f };
+					};
+					auto applyFields = [&profile](const BetterCheats::PresetStore::Field* f, int count)
+					{
+						for (int g = 0; g < kGrenadeRowCount && g < count; ++g)
+						{
+							profile.grenadeValues[g] = f[g].value;
+							SessionConfig::Set(ConfigKey(profile, kGrenadeRows[g].key, "value"), f[g].value);
+						}
+						if (count > kGrenadeRowCount)
+						{
+							profile.infiniteCharges = f[kGrenadeRowCount].value != 0.0f;
+							SessionConfig::Set(ConfigKey(profile, "infiniteCharges", "enabled"), profile.infiniteCharges);
+						}
+					};
+					// The grenade tab has no built-in presets to guard against.
+					auto isBuiltin      = [](const char*) { return false; };
+					auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
+
+					BetterCheats::UI::RenderSavedPresetsRow(imgui, "grenade_saved_presets", presetGroup.c_str(),
+						presetFields, kGrenadePresetFieldCount,
+						getLive, applyFields, isBuiltin, computeSuggest, profile.presetRow);
+				}
 				imgui->Spacing();
 
 				if (imgui->Checkbox("Infinite charges", &profile.infiniteCharges))
@@ -1650,40 +1686,6 @@ namespace BetterCheats::Panels::Weapons
 				}
 				imgui->SameLine(0.0f, -1.0f);
 				imgui->TextDisabled(profile.raw.c_str());
-
-				imgui->Spacing();
-				{
-					constexpr int kGrenadePresetFieldCount = kGrenadeRowCount + 1; // + infiniteCharges
-					BetterCheats::PresetStore::Field presetFields[kGrenadePresetFieldCount];
-					const std::string presetGroup = std::string("Weapon:") + profile.key;
-
-					auto getLive = [&profile](BetterCheats::PresetStore::Field* out)
-					{
-						for (int g = 0; g < kGrenadeRowCount; ++g)
-							out[g] = { kGrenadeRows[g].key, profile.grenadeValues[g] };
-						out[kGrenadeRowCount] = { "infiniteCharges", profile.infiniteCharges ? 1.0f : 0.0f };
-					};
-					auto applyFields = [&profile](const BetterCheats::PresetStore::Field* f, int count)
-					{
-						for (int g = 0; g < kGrenadeRowCount && g < count; ++g)
-						{
-							profile.grenadeValues[g] = f[g].value;
-							SessionConfig::Set(ConfigKey(profile, kGrenadeRows[g].key, "value"), f[g].value);
-						}
-						if (count > kGrenadeRowCount)
-						{
-							profile.infiniteCharges = f[kGrenadeRowCount].value != 0.0f;
-							SessionConfig::Set(ConfigKey(profile, "infiniteCharges", "enabled"), profile.infiniteCharges);
-						}
-					};
-					// The grenade tab has no built-in presets to guard against.
-					auto isBuiltin      = [](const char*) { return false; };
-					auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
-
-					BetterCheats::UI::RenderSavedPresetsRow(imgui, "grenade_saved_presets", presetGroup.c_str(),
-						presetFields, kGrenadePresetFieldCount,
-						getLive, applyFields, isBuiltin, computeSuggest, profile.presetRow);
-				}
 
 				// Fuse / Blast Radius / Throw Force: global, not per-weapon-type --
 				// shown (and editable) identically on every grenade tab, so "Reset
@@ -1798,6 +1800,102 @@ namespace BetterCheats::Panels::Weapons
 				}
 			}
 			if (!anyPreset) { imgui->SameLine(0.0f, -1.0f); imgui->TextDisabled("(none for this weapon)"); }
+
+			// Saved presets sit directly under the built-ins and above every
+			// control, same position in every group.
+			imgui->Spacing();
+			{
+				constexpr int kWeaponPresetFieldCount = kAttrCount + 2; // + oneHitKill + infiniteMagazine
+				BetterCheats::PresetStore::Field presetFields[kWeaponPresetFieldCount];
+				const std::string presetGroup = std::string("Weapon:") + profile.key;
+
+				auto getLive = [&profile](BetterCheats::PresetStore::Field* out)
+				{
+					for (int a = 0; a < kAttrCount; ++a)
+						out[a] = { kAttrs[a].key, profile.values[a] };
+					out[kAttrCount]     = { "oneHitKill",       profile.oneHitKill       ? 1.0f : 0.0f };
+					out[kAttrCount + 1] = { "infiniteMagazine", profile.infiniteMagazine ? 1.0f : 0.0f };
+				};
+				auto applyFields = [&profile](const BetterCheats::PresetStore::Field* f, int count)
+				{
+					for (int a = 0; a < kAttrCount && a < count; ++a)
+					{
+						profile.values[a] = f[a].value;
+						SessionConfig::Set(ConfigKey(profile, kAttrs[a].key, "value"), f[a].value);
+					}
+					if (count > kAttrCount)
+					{
+						profile.oneHitKill = f[kAttrCount].value != 0.0f;
+						SessionConfig::Set(ConfigKey(profile, "oneHitKill", "enabled"), profile.oneHitKill);
+					}
+					if (count > kAttrCount + 1)
+					{
+						profile.infiniteMagazine = f[kAttrCount + 1].value != 0.0f;
+						SessionConfig::Set(ConfigKey(profile, "infiniteMagazine", "enabled"), profile.infiniteMagazine);
+					}
+				};
+				// Only the built-ins that actually apply to THIS weapon (same
+				// `match` filtering the preset buttons above already use) --
+				// a name free on other weapons but taken here should still
+				// be refused, and vice versa.
+				auto isBuiltin = [&loweredRaw](const char* name)
+				{
+					for (int i = 0; i < kPresetCount; ++i)
+					{
+						const Preset& preset = kPresets[i];
+						if (preset.match && *preset.match && loweredRaw.find(preset.match) == std::string::npos)
+							continue;
+						if (strcmp(preset.label, name) == 0)
+							return true;
+					}
+					return false;
+				};
+				// "<built-in> Custom" only when every applicable-preset field
+				// matches AND every other row is still at its own default --
+				// a hand-tweaked mix that happens to overlap one preset's
+				// values isn't that preset.
+				auto computeSuggest = [&profile, &loweredRaw](char* out, int cap)
+				{
+					for (int i = 0; i < kPresetCount; ++i)
+					{
+						const Preset& preset = kPresets[i];
+						if (preset.match && *preset.match && loweredRaw.find(preset.match) == std::string::npos)
+							continue;
+
+						bool touched[kAttrCount] = {};
+						bool matches = true;
+						for (const PresetVal& v : preset.vals)
+						{
+							if (v.attr < 0) break;
+							if (std::fabs(profile.values[v.attr] - v.value) > BetterCheats::kActiveEpsilon)
+							{
+								matches = false;
+								break;
+							}
+							touched[v.attr] = true;
+						}
+						if (matches)
+						{
+							for (int a = 0; a < kAttrCount && matches; ++a)
+								if (!touched[a] && BetterCheats::DiffersFromDefault(profile.values[a], kAttrs[a].defaultValue))
+									matches = false;
+						}
+						if (matches && (profile.oneHitKill || profile.infiniteMagazine))
+							matches = false;   // presets never set these -- a match must leave them off too
+
+						if (matches)
+						{
+							snprintf(out, cap, "%s Custom", preset.label);
+							return;
+						}
+					}
+					snprintf(out, cap, "Custom");
+				};
+
+				BetterCheats::UI::RenderSavedPresetsRow(imgui, "weapon_saved_presets", presetGroup.c_str(),
+					presetFields, kWeaponPresetFieldCount,
+					getLive, applyFields, isBuiltin, computeSuggest, profile.presetRow);
+			}
 			imgui->Spacing();
 
 			// ---- per-weapon toggles --------------------------------------------
@@ -1894,100 +1992,6 @@ namespace BetterCheats::Panels::Weapons
 			}
 			imgui->SameLine(0.0f, -1.0f);
 			imgui->TextDisabled(profile.raw.c_str());
-
-			imgui->Spacing();
-			{
-				constexpr int kWeaponPresetFieldCount = kAttrCount + 2; // + oneHitKill + infiniteMagazine
-				BetterCheats::PresetStore::Field presetFields[kWeaponPresetFieldCount];
-				const std::string presetGroup = std::string("Weapon:") + profile.key;
-
-				auto getLive = [&profile](BetterCheats::PresetStore::Field* out)
-				{
-					for (int a = 0; a < kAttrCount; ++a)
-						out[a] = { kAttrs[a].key, profile.values[a] };
-					out[kAttrCount]     = { "oneHitKill",       profile.oneHitKill       ? 1.0f : 0.0f };
-					out[kAttrCount + 1] = { "infiniteMagazine", profile.infiniteMagazine ? 1.0f : 0.0f };
-				};
-				auto applyFields = [&profile](const BetterCheats::PresetStore::Field* f, int count)
-				{
-					for (int a = 0; a < kAttrCount && a < count; ++a)
-					{
-						profile.values[a] = f[a].value;
-						SessionConfig::Set(ConfigKey(profile, kAttrs[a].key, "value"), f[a].value);
-					}
-					if (count > kAttrCount)
-					{
-						profile.oneHitKill = f[kAttrCount].value != 0.0f;
-						SessionConfig::Set(ConfigKey(profile, "oneHitKill", "enabled"), profile.oneHitKill);
-					}
-					if (count > kAttrCount + 1)
-					{
-						profile.infiniteMagazine = f[kAttrCount + 1].value != 0.0f;
-						SessionConfig::Set(ConfigKey(profile, "infiniteMagazine", "enabled"), profile.infiniteMagazine);
-					}
-				};
-				// Only the built-ins that actually apply to THIS weapon (same
-				// `match` filtering the preset buttons above already use) --
-				// a name free on other weapons but taken here should still
-				// be refused, and vice versa.
-				auto isBuiltin = [&loweredRaw](const char* name)
-				{
-					for (int i = 0; i < kPresetCount; ++i)
-					{
-						const Preset& preset = kPresets[i];
-						if (preset.match && *preset.match && loweredRaw.find(preset.match) == std::string::npos)
-							continue;
-						if (strcmp(preset.label, name) == 0)
-							return true;
-					}
-					return false;
-				};
-				// "<built-in> Custom" only when every applicable-preset field
-				// matches AND every other row is still at its own default --
-				// a hand-tweaked mix that happens to overlap one preset's
-				// values isn't that preset.
-				auto computeSuggest = [&profile, &loweredRaw](char* out, int cap)
-				{
-					for (int i = 0; i < kPresetCount; ++i)
-					{
-						const Preset& preset = kPresets[i];
-						if (preset.match && *preset.match && loweredRaw.find(preset.match) == std::string::npos)
-							continue;
-
-						bool touched[kAttrCount] = {};
-						bool matches = true;
-						for (const PresetVal& v : preset.vals)
-						{
-							if (v.attr < 0) break;
-							if (std::fabs(profile.values[v.attr] - v.value) > BetterCheats::kActiveEpsilon)
-							{
-								matches = false;
-								break;
-							}
-							touched[v.attr] = true;
-						}
-						if (matches)
-						{
-							for (int a = 0; a < kAttrCount && matches; ++a)
-								if (!touched[a] && BetterCheats::DiffersFromDefault(profile.values[a], kAttrs[a].defaultValue))
-									matches = false;
-						}
-						if (matches && (profile.oneHitKill || profile.infiniteMagazine))
-							matches = false;   // presets never set these -- a match must leave them off too
-
-						if (matches)
-						{
-							snprintf(out, cap, "%s Custom", preset.label);
-							return;
-						}
-					}
-					snprintf(out, cap, "Custom");
-				};
-
-				BetterCheats::UI::RenderSavedPresetsRow(imgui, "weapon_saved_presets", presetGroup.c_str(),
-					presetFields, kWeaponPresetFieldCount,
-					getLive, applyFields, isBuiltin, computeSuggest, profile.presetRow);
-			}
 			} // else (!profile.isGrenade)
 
 			imgui->PopID();
