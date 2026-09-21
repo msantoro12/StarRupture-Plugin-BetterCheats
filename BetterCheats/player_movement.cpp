@@ -1006,12 +1006,25 @@ namespace BetterCheats::Panels::Movement
 		constexpr const char* kMovementPresetGroup = "Movement";
 		constexpr int         kMovementFieldCount  = kAttrCount + kRawCount;
 
+		// kAttrs[kAttrSprintSpeed].key and kRaws[kRawSprintSpeed].key are both
+		// the bare string "sprintSpeed" (the GAS multiplier and the raw
+		// movement-component speed happen to share a name) -- PresetStore
+		// keys fields by string, so two Field entries with the same key would
+		// make Load() resolve both to whichever one appears first in the
+		// stored preset, silently overwriting the other on every load. Only
+		// the preset-facing key needs to change here; config persistence
+		// (AttrConfigKey/RawConfigKey below) still uses kRaws[r].key as-is.
+		const char* MovementRawPresetKey(int r)
+		{
+			return (r == kRawSprintSpeed) ? "sprintSpeedRaw" : kRaws[r].key;
+		}
+
 		void GetLiveMovementFields(BetterCheats::PresetStore::Field* out)
 		{
 			for (int a = 0; a < kAttrCount; ++a)
 				out[a] = { kAttrs[a].key, g_attrValues[a].load() };
 			for (int r = 0; r < kRawCount; ++r)
-				out[kAttrCount + r] = { kRaws[r].key, g_rawValues[r].load() };
+				out[kAttrCount + r] = { MovementRawPresetKey(r), g_rawValues[r].load() };
 		}
 
 		void ApplyMovementFields(const BetterCheats::PresetStore::Field* fields, int count)

@@ -199,6 +199,35 @@ namespace BetterCheats::Panels::Tools
 
 	void RenderImGui(IModLoaderImGui* imgui)
 	{
+		// No built-in presets here, so saved presets sit at the very top --
+		// same "above every control" position every group uses.
+		{
+			static BetterCheats::UI::SavedPresetRowState s_presetRow;
+			constexpr int kFieldCount = 4;
+			BetterCheats::PresetStore::Field fields[kFieldCount];
+
+			auto getLive = [](BetterCheats::PresetStore::Field* out)
+			{
+				out[0] = { "overloadMining",    g_overload        ? 1.0f : 0.0f };
+				out[1] = { "noDrillOverheat",   g_noDrillOverheat ? 1.0f : 0.0f };
+				out[2] = { "miningDamageMult",  g_damageMultiplier.load() };
+				out[3] = { "miningBoost",       g_miningBoostValue.load() };
+			};
+			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
+			{
+				if (count > 0) { g_overload        = f[0].value != 0.0f; SessionConfig::Set("playerTools.overloadMining", g_overload); }
+				if (count > 1) { g_noDrillOverheat = f[1].value != 0.0f; SessionConfig::Set("playerTools.noDrillOverheat", g_noDrillOverheat); }
+				if (count > 2) { g_damageMultiplier.store(f[2].value); SessionConfig::Set("playerTools.miningDamageMult.value", f[2].value); }
+				if (count > 3) { g_miningBoostValue.store(f[3].value); SessionConfig::Set("playerTools.miningBoost.value", f[3].value); }
+			};
+			auto isBuiltin      = [](const char*) { return false; };
+			auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
+
+			BetterCheats::UI::RenderSavedPresetsRow(imgui, "tools_saved_presets", "Tools",
+				fields, kFieldCount, getLive, applyFields, isBuiltin, computeSuggest, s_presetRow);
+		}
+		imgui->Spacing();
+
 		imgui->SeparatorText("Mining");
 
 		if (imgui->BeginTable("##mining_table", 2, kToolsTableFlags))

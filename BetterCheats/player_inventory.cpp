@@ -1179,6 +1179,95 @@ namespace BetterCheats::Panels::Inventory
 				return;
 			}
 
+			// No built-in presets here, so saved presets sit at the very top --
+			// same "above every control" position every group uses. One "Inventory"
+			// group covers all three tiers in one save/load: the global multiplier,
+			// every category (keyed by label, same future-proofing as
+			// PersistCategoryOverrides -- a game patch reordering EUIItemType must
+			// not remap a saved override onto the wrong category), and every item
+			// (keyed by its exact UniqueItemName, same as g_stackOverrides itself).
+			// Every category/item is included on every save, not just the
+			// currently-overridden ones, with -1 meaning "no override" -- a sparse
+			// field set would leave an override in place on load just because that
+			// item happened not to be part of the saved preset.
+			{
+				static BetterCheats::UI::SavedPresetRowState s_presetRow;
+
+				std::vector<std::string> categoryKeys(g_stackCategories.size());
+				for (size_t i = 0; i < g_stackCategories.size(); ++i)
+					categoryKeys[i] = std::string("category:") + CategoryLabel(g_stackCategories[i]);
+
+				std::vector<std::string> itemKeys(g_stackItems.size());
+				for (size_t i = 0; i < g_stackItems.size(); ++i)
+					itemKeys[i] = "item:" + g_stackItems[i].uniqueName;
+
+				const int fieldCount = 1 + static_cast<int>(g_stackCategories.size()) + static_cast<int>(g_stackItems.size());
+				std::vector<BetterCheats::PresetStore::Field> fields(fieldCount);
+
+				auto getLive = [&](BetterCheats::PresetStore::Field* out)
+				{
+					std::unordered_map<int, float> categoryOverrides;
+					{
+						std::lock_guard<std::mutex> lock(g_categoryMutex);
+						categoryOverrides = g_categoryOverrides;
+					}
+					std::unordered_map<std::string, int> itemOverrides;
+					{
+						std::lock_guard<std::mutex> lock(g_overrideMutex);
+						itemOverrides = g_stackOverrides;
+					}
+
+					int idx = 0;
+					out[idx++] = { "multiplier", g_stackMultiplier.load() };
+
+					for (size_t i = 0; i < g_stackCategories.size(); ++i)
+					{
+						const auto it = categoryOverrides.find(static_cast<int>(g_stackCategories[i]));
+						out[idx++] = { categoryKeys[i].c_str(), it != categoryOverrides.end() ? it->second : -1.0f };
+					}
+					for (size_t i = 0; i < g_stackItems.size(); ++i)
+					{
+						const auto it = itemOverrides.find(g_stackItems[i].uniqueName);
+						out[idx++] = { itemKeys[i].c_str(), it != itemOverrides.end() ? static_cast<float>(it->second) : -1.0f };
+					}
+				};
+				auto applyFields = [&](const BetterCheats::PresetStore::Field* f, int count)
+				{
+					int idx = 0;
+					if (idx < count)
+					{
+						const float mult = f[idx].value;
+						g_stackMultiplier.store(mult);
+						SessionConfig::Set("playerInventory.stacks.multiplier", mult);
+					}
+					++idx;
+
+					for (SDK::EUIItemType cat : g_stackCategories)
+					{
+						if (idx >= count) break;
+						const float v = f[idx].value;
+						if (v < 0.0f) ClearCategoryOverride(cat);
+						else          SetCategoryOverride(cat, v);
+						++idx;
+					}
+					for (const StackEntry& e : g_stackItems)
+					{
+						if (idx >= count) break;
+						const float v = f[idx].value;
+						if (v < 0.0f) ClearStackOverride(e.uniqueName);
+						else          SetStackOverride(e.uniqueName, static_cast<int>(v + 0.5f));
+						++idx;
+					}
+					RefreshFilteredStackItems();
+				};
+				auto isBuiltin      = [](const char*) { return false; };
+				auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
+
+				BetterCheats::UI::RenderSavedPresetsRow(imgui, "inventory_saved_presets", "Inventory",
+					fields.data(), fieldCount, getLive, applyFields, isBuiltin, computeSuggest, s_presetRow);
+			}
+			imgui->Spacing();
+
 			// ---- global multiplier -------------------------------------------
 			float multiplier = g_stackMultiplier.load();
 			if (imgui->BeginTable("##stack_mult_table", 3, kTableFlags))
