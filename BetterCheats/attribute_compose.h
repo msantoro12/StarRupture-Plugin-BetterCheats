@@ -61,11 +61,11 @@ namespace BetterCheats
 	};
 
 	// Survives a hot-reload that couldn't run Release() cleanly. The loader's own
-	// RELOAD button runs PluginShutdown on the render thread (see
-	// reviews/weapon-stats-and-reload.md); if GetLocalCharacter() throws there,
-	// Release() never runs and FreeLibrary proceeds anyway, leaving the old DLL
-	// instance's last write sitting in `value` for the new instance to mistake for
-	// a live game aggregate. These persist {game, written} to SessionConfig, keyed
+	// RELOAD button runs PluginShutdown on the render thread, not the game
+	// thread every other entry point assumes; if GetLocalCharacter() throws
+	// there, Release() never runs and FreeLibrary proceeds anyway, leaving the
+	// old DLL instance's last write sitting in `value` for the new instance to
+	// mistake for a live game aggregate. These persist {game, written} to SessionConfig, keyed
 	// by a caller-chosen path (e.g. "playerWeapons.compose.damage") -- one slot per
 	// composed row, not per weapon/character, since the thing being restored is a
 	// value on a shared instance (the attribute set, or a weapon type's data

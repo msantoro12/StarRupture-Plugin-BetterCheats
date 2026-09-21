@@ -442,9 +442,10 @@ namespace BetterCheats::Panels::Movement
 		// compose fix works without the owner having to find the setting.
 		std::atomic<bool> g_showLiveValues{ true };
 
-		// One-shot proof-of-life logging (gss.13): confirms in ModLoader.log that
-		// both the Tick-side fill and the RenderImGui-side draw actually ran this
-		// session.
+		// One-shot confirmation logging: records in ModLoader.log that both the
+		// Tick-side fill and the RenderImGui-side draw have run this session,
+		// so a silently-broken live-values pipeline (one side running, the
+		// other not) is diagnosable from the log alone instead of guesswork.
 		std::atomic<bool> g_loggedTickFill{ false };
 		std::atomic<bool> g_loggedRender{ false };
 
@@ -994,7 +995,7 @@ namespace BetterCheats::Panels::Movement
 		}
 
 		// ---------------------------------------------------------------------
-		// Saved presets (gss.21, PresetStore-backed) -- the owner's own tweaks,
+		// Saved presets (PresetStore-backed) -- the owner's own tweaks,
 		// named and kept apart from the built-in kPresets above. One "Movement"
 		// group covers every row, GAS and raw, in kAttrs/kRaws index order
 		// (GetLiveMovementFields/ApplyMovementFields must stay in that same
@@ -1376,10 +1377,9 @@ namespace BetterCheats::Panels::Movement
 
 		// The loader's own RELOAD button runs PluginShutdown from its D3D Present
 		// hook, not the game thread Tick() recorded -- GetLocalCharacter() and
-		// every UObject touch below intermittently crash there (see player_lookup.h
-		// and reviews/weapon-stats-and-reload.md Q3). Forget instead of Release:
-		// SessionConfig still has whatever RestoreIfStale needs to undo a leftover
-		// write on the next activation, off-thread or not.
+		// every UObject touch below intermittently crash there (see player_lookup.h).
+		// Forget instead of Release: SessionConfig still has whatever RestoreIfStale
+		// needs to undo a leftover write on the next activation, off-thread or not.
 		if (!BetterCheats::IsGameThread())
 		{
 			for (int a = 0; a < kAttrCount; ++a)

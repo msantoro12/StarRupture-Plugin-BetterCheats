@@ -5,10 +5,9 @@
 
 // The loader's own RELOAD button runs PluginShutdown from inside its D3D
 // Present hook -- the render thread, not the game thread every Tick() and
-// GetLocalCharacter() call assumes (see reviews/weapon-stats-and-reload.md).
-// A shutdown path that might run there needs to know before it touches any
-// UObject, since GetLocalCharacter() intermittently crashes off the game
-// thread (player_lookup.h).
+// GetLocalCharacter() call assumes. A shutdown path that might run there
+// needs to know before it touches any UObject, since GetLocalCharacter()
+// intermittently crashes off the game thread (player_lookup.h).
 namespace BetterCheats
 {
 	inline std::atomic<unsigned long> g_gameThreadId{ 0 };

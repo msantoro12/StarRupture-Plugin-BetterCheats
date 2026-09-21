@@ -7,7 +7,7 @@
 
 // Shared item-type asset-registry plumbing. Both the Item Spawner
 // (player_items.cpp) and the Inventory panel's stack-size controls
-// (player_inventory.cpp, gss.17) need "every UAuItemBlueprint asset type,
+// (player_inventory.cpp) need "every UAuItemBlueprint asset type,
 // resolved down to its UAuItemDataBase CDO" -- the resolution path (a
 // ProcessEvent call against IAssetRegistry, then a force-load + generated-
 // class chase mirroring the game's own UCrUW_CheatItemsTab::

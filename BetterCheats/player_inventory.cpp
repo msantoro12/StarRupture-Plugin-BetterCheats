@@ -686,7 +686,7 @@ namespace BetterCheats::Panels::Inventory
 		}
 
 		// =====================================================================
-		// Item stack sizes (gss.17). UAuItemDataBase::MaxStack is a plain int32
+		// Item stack sizes. UAuItemDataBase::MaxStack is a plain int32
 		// on the item TYPE's own CDO (AuItems_classes.hpp:290) -- same per-
 		// type-CDO shape as the weapon magazine/grenade fields in
 		// player_weapons.cpp, so it uses the exact same capture/write/restore/
@@ -796,10 +796,10 @@ namespace BetterCheats::Panels::Inventory
 			return ClampStackValue(static_cast<int>(static_cast<float>(originalMaxStack) * multiplier + 0.5f));
 		}
 
-		// EUIItemType's own enum names, not the owner's raw/crafted/building/
-		// consumable -- the game has no "crafted" or "building" bucket in this
-		// field (see the gss.20 report), so relabelling would just invent a
-		// mapping that doesn't exist. None/EmptyItem/BlueprintItem/Count are
+		// EUIItemType's own enum names, not a raw/crafted/building/consumable
+		// split -- the game has no "crafted" or "building" bucket in this
+		// field, so relabelling would just invent a mapping that doesn't
+		// exist. None/EmptyItem/BlueprintItem/Count are
 		// real enum values but never expected to carry actual stackable items
 		// through the scan's own filtering; kept here only so the switch is
 		// exhaustive and a stray one still gets a readable label instead of
@@ -1465,9 +1465,9 @@ namespace BetterCheats::Panels::Inventory
 
 		ForgetWidgets();
 
-		// Item stack sizes: same render-thread-Shutdown hazard gss.15 fixed for
-		// weapons (reviews/weapon-stats-and-reload.md Q3) -- the loader's own
-		// RELOAD button runs PluginShutdown from its D3D Present hook, not the
+		// Item stack sizes: same render-thread-Shutdown hazard as the weapon
+		// panel's own composed fields -- the loader's own RELOAD button runs
+		// PluginShutdown from its D3D Present hook, not the
 		// game thread Tick() recorded, and every UObject touch below
 		// intermittently crashes there. Forget instead of Release off-thread:
 		// SessionConfig still has whatever RestoreIfStale needs to undo a

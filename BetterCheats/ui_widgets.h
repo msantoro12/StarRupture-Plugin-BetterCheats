@@ -345,7 +345,7 @@ namespace BetterCheats::UI
 	}
 
 	// ---------------------------------------------------------------------
-	// Saved presets row (gss.21) -- a dropdown of a PresetStore group's saved
+	// Saved presets row -- a dropdown of a PresetStore group's saved
 	// presets plus Save/Rename/Delete, alongside (never replacing) a panel's
 	// own built-in preset buttons. Save never prompts: it computes a
 	// suggested name itself and selects the result, staying one click.

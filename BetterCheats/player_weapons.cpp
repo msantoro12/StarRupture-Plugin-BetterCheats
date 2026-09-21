@@ -68,9 +68,8 @@ namespace BetterCheats::Panels::Weapons
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Higher is faster. Multiplies on top of any attachment bonus." },
 			// .member unused: Tick() special-cases this row onto the weapon data
 			// asset's BaseMagazine.Value instead (g_composedMagazine) -- the clip-size
-			// getter never reads MaxMagAmmoModOffset at all, see
-			// reviews/weapon-stats-and-reload.md Q2. Kept here only so every row still
-			// has a valid member pointer for this table's shape.
+			// getter never reads MaxMagAmmoModOffset at all. Kept here only so every
+			// row still has a valid member pointer for this table's shape.
 			{ "Magazine Size",      "magazine", &SDK::UCrWeaponAttributeSet::MaxMagAmmoModOffset,
 			  0.0f, -100.0f, 999.0f, 1.0f, "%.0f", "Flat OFFSET added to this weapon's magazine (its real base\ncapacity, not an attachment-style modifier). Negative shrinks it." },
 			{ "Damage Falloff",     "falloff",  &SDK::UCrWeaponAttributeSet::DamageFallOffModMultiplier,
@@ -149,7 +148,7 @@ namespace BetterCheats::Panels::Weapons
 		};
 		constexpr int kPresetCount = static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0]));
 
-		// Grenade rows (gss.16). UCrGrenadeWeaponItemDataBase extends
+		// Grenade rows. UCrGrenadeWeaponItemDataBase extends
 		// UCrWeaponItemDataBase, so a grenade shows up through the exact same
 		// LastEquippedWeaponData/profile-discovery path as every gun -- this is
 		// what used to render the standard 10-row kAttrs table (Damage, Fire
@@ -198,15 +197,13 @@ namespace BetterCheats::Panels::Weapons
 			BetterCheats::ComposedAttribute::Mode::Absolute,  // Min Charge
 		};
 
-		// Fuse / Blast Radius / Throw Force (gss.16 correction). The first pass
-		// of the grenade review only searched Client/SDK/ and missed these --
-		// they live on classes Dumper-7 only typed under Server/SDK/ (
-		// BP_GrenadeProjectile_classes.hpp, GA_ThrowGrenade_classes.hpp), whose
-		// struct layout for THIS client build is unverified and may not match
-		// (see reviews/grenade-reachability.md). Resolved by NAME via the
-		// loader's IPluginObjectProperties instead of a cast through the
-		// Server SDK's C++ struct -- offset-independent, so a layout mismatch
-		// can't silently read/write the wrong bytes.
+		// Fuse / Blast Radius / Throw Force. These live on classes Dumper-7
+		// only typed under the game's Server SDK dump (BP_GrenadeProjectile_
+		// classes.hpp, GA_ThrowGrenade_classes.hpp), whose struct layout for
+		// THIS client build is unverified and may not match. Resolved by NAME
+		// via the loader's IPluginObjectProperties instead of a cast through
+		// that Server-SDK C++ struct -- offset-independent, so a layout
+		// mismatch can't silently read/write the wrong bytes.
 		//
 		// Unlike Charge Cost/Max/Min Charge above, each of these three lives on
 		// exactly ONE shared CDO for the whole game (one projectile class, one
@@ -323,16 +320,16 @@ namespace BetterCheats::Panels::Weapons
 			return true;
 		}
 
-		// One-shot diagnostic (gss.20): dumps the grenade damage GameplayEffect's
-		// modifier shape to the log so a future build can target the real
-		// index/field with actual data instead of guessing -- see
-		// reviews/grenade-reachability.md Q3 ("first thing to test in-game").
+		// One-shot diagnostic, temporary: dumps the grenade damage GameplayEffect's
+		// modifier shape to the log so a future change can target the real
+		// index/field with actual data instead of guessing -- remove this once
+		// that field is known and wired up as a real control.
 		// UGE_GrenadeProjectileDamage_C's own declared size is 0x0000 (all data
 		// inherited from the native UGameplayEffect base), so casting the
 		// resolved CDO straight to SDK::UGameplayEffect* is safe: unlike
 		// BP_GrenadeProjectile_C/GA_ThrowGrenade_C, UGameplayEffect is a stable
-		// ENGINE struct already identical in this project's Client SDK -- no
-		// Server/Client layout risk, no by-name property lookup needed.
+		// ENGINE struct already identical in this project's client SDK dump --
+		// no server/client layout risk, no by-name property lookup needed.
 		// Read-only: never writes anything, and every pointer is guarded so an
 		// unexpected shape logs a warning instead of crashing.
 		bool  g_probedGrenadeDamage = false;
@@ -431,7 +428,7 @@ namespace BetterCheats::Panels::Weapons
 			float       grenadeValues[kGrenadeRowCount];
 			bool        infiniteCharges  = false;
 
-			// Saved-presets UI state (gss.21) -- selected/renaming/error, one
+			// Saved-presets UI state -- selected/renaming/error, one
 			// instance per weapon type so switching tabs doesn't leak one
 			// weapon's in-progress rename into another's.
 			BetterCheats::UI::SavedPresetRowState presetRow;
@@ -458,9 +455,10 @@ namespace BetterCheats::Panels::Weapons
 		// compose fix works without the owner having to find the setting.
 		std::atomic<bool> g_showLiveValues{ true };
 
-		// One-shot proof-of-life logging (gss.13): confirms in ModLoader.log that
-		// both the Tick-side fill and the RenderImGui-side draw actually ran this
-		// session, instead of guessing from a report of "nothing happens".
+		// One-shot confirmation logging: records in ModLoader.log that both the
+		// Tick-side fill and the RenderImGui-side draw have run this session,
+		// so a silently-broken live-values pipeline is diagnosable from the
+		// log alone rather than from a report of "nothing happens".
 		std::atomic<bool> g_loggedTickFill{ false };
 		std::atomic<bool> g_loggedRender{ false };
 
@@ -468,8 +466,8 @@ namespace BetterCheats::Panels::Weapons
 		// (LastEquippedWeaponData) -- the inherited Au-layer fields on
 		// UCrWeaponAttributeSet (WeaponDamage, FireRate, ...) that a previous build
 		// showed here are never written by the game at all (confirmed permanently
-		// zero; see reviews/weapon-stats-and-reload.md Q1), a dead parallel layer,
-		// not a bug in how they were read. -1 = not available yet, matching
+		// zero), a dead parallel layer, not a bug in how they were read.
+		// -1 = not available yet, matching
 		// g_dbgMag above. g_dbgWeaponBaseMagazine is the CAPTURED ORIGINAL (via
 		// g_composedMagazine), not a live read, since Magazine Size writes through
 		// this same field -- a live read while active would show our own offset.
@@ -492,7 +490,7 @@ namespace BetterCheats::Panels::Weapons
 		std::atomic<float> g_dbgAttrBase[kAttrCount];
 		std::atomic<float> g_dbgAttrBuffed[kAttrCount];
 
-		// Grenade row readouts (gss.16), parallel to g_dbgAttrGame/g_dbgAttrExpected
+		// Grenade row readouts, parallel to g_dbgAttrGame/g_dbgAttrExpected
 		// above but indexed by GrenadeRowIndex instead of AttrIndex -- these three
 		// rows aren't part of the per-gun kAttrs table (Charge Cost lives on a
 		// different CDO type; Max/Min Charge live on a different attribute set),
@@ -666,11 +664,11 @@ namespace BetterCheats::Panels::Weapons
 		// Magazine Size composes separately from the other nine rows: the clip-size
 		// getter reads LastEquippedWeaponData->BaseMagazine.Value directly (a plain
 		// FScalableFloat.Value on the weapon TYPE's data asset CDO), not the GAS
-		// MaxMagAmmoModOffset this row used to write -- see
-		// reviews/weapon-stats-and-reload.md Q2. A magazine size can't sensibly go
-		// to zero or negative, or run away unbounded if something stacks badly, so
-		// it gets its own sanity clamp instead of the row's own -100..999 slider
-		// range (that range bounds the OFFSET the slider picks, not the result).
+		// MaxMagAmmoModOffset this row used to write. A magazine size can't
+		// sensibly go to zero or negative, or run away unbounded if something
+		// stacks badly, so it gets its own sanity clamp instead of the row's
+		// own -100..999 slider range (that range bounds the OFFSET the slider
+		// picks, not the result).
 		constexpr float kMagazineFloor   = 1.0f;
 		constexpr float kMagazineCeiling = 9999.0f;
 		BetterCheats::ComposedAttribute g_composedMagazine;
@@ -955,10 +953,10 @@ namespace BetterCheats::Panels::Weapons
 
 		// Copy the active profile out under the lock instead of keeping a reference
 		// into g_profiles across the SDK calls below -- a newly discovered weapon can
-		// push_back and reallocate the vector from another Tick call. ROOT CAUSE of
-		// the gss.12 "dead readout" bug: this used to `return` here whenever no
-		// weapon profile was active (holding a tool, nothing equipped), which
-		// skipped the live-values readout below entirely -- unlike Movement, whose
+		// push_back and reallocate the vector from another Tick call. This also
+		// used to `return` here whenever no weapon profile was active (holding a
+		// tool, nothing equipped), which silently killed the live-values readout
+		// below entirely -- unlike Movement, whose
 		// equivalent update has no such gate and always runs. Fall back to an
 		// all-default profile instead: IsActive() reads false for every row, so
 		// the compose loop below Releases everything (correct -- nothing should be
@@ -1050,9 +1048,8 @@ namespace BetterCheats::Panels::Weapons
 
 			// Magazine Size: composes (Add) onto LastEquippedWeaponData->BaseMagazine
 			// .Value, the weapon TYPE's own data asset field the clip-size getter
-			// actually reads (reviews/weapon-stats-and-reload.md Q2) -- not a GAS
-			// attribute, so it's outside the `weapons`-gated loop above and keyed by
-			// the data asset, not the character.
+			// actually reads -- not a GAS attribute, so it's outside the
+			// `weapons`-gated loop above and keyed by the data asset, not the character.
 			SDK::UCrWeaponItemDataBase* equippedData = character->WeaponSystem->LastEquippedWeaponData;
 			ReleaseMagazineIfOwnerChanged(equippedData);
 
@@ -1076,7 +1073,7 @@ namespace BetterCheats::Panels::Weapons
 				g_dbgWeaponBaseMagazine.store(active ? g_composedMagazine.GetGame() : step.game);
 			}
 
-			// Grenade rows (gss.16). Charge Cost lives on the equipped grenade
+			// Grenade rows. Charge Cost lives on the equipped grenade
 			// TYPE's own data asset (UCrGrenadeWeaponItemDataBase extends
 			// UCrWeaponItemDataBase, so LastEquippedWeaponData covers it too) --
 			// same per-type-CDO shape as BaseMagazine above. Max/Min Charge are GAS
@@ -1143,9 +1140,9 @@ namespace BetterCheats::Panels::Weapons
 				}
 			}
 
-			// Fuse / Blast Radius / Throw Force (gss.16 correction): global,
-			// not gated by whether a grenade is currently equipped -- see the
-			// GrenadeGlobalDef comment above for why.
+			// Fuse / Blast Radius / Throw Force: global, not gated by whether a
+			// grenade is currently equipped -- see the GrenadeGlobalDef comment
+			// above for why.
 			{
 				IPluginHooks* hooks = GetHooks();
 				IPluginObjectProperties* props = hooks ? hooks->ObjectProperties : nullptr;
@@ -1212,10 +1209,9 @@ namespace BetterCheats::Panels::Weapons
 	{
 		// The loader's own RELOAD button runs PluginShutdown from its D3D Present
 		// hook, not the game thread Tick() recorded -- GetLocalCharacter() and
-		// every UObject touch below intermittently crash there (see player_lookup.h
-		// and reviews/weapon-stats-and-reload.md Q3). Forget instead of Release:
-		// SessionConfig still has whatever RestoreIfStale needs to undo a leftover
-		// write on the next activation, off-thread or not.
+		// every UObject touch below intermittently crash there (see player_lookup.h).
+		// Forget instead of Release: SessionConfig still has whatever RestoreIfStale
+		// needs to undo a leftover write on the next activation, off-thread or not.
 		if (!BetterCheats::IsGameThread())
 		{
 			for (int a = 0; a < kAttrCount; ++a)
@@ -1382,8 +1378,8 @@ namespace BetterCheats::Panels::Weapons
 		if (!g_loggedRender.exchange(true))
 			LOG_INFO("Weapons: live values readout rendering (%d rows).", kAttrCount);
 
-		// First control in the tab, unconditional -- gss.12 buried this below a
-		// disclaimer line where it was easy to miss entirely.
+		// First control in the tab, unconditional -- burying this below a
+		// disclaimer line made it easy to miss entirely.
 		bool showLiveValues = g_showLiveValues.load();
 		if (imgui->Checkbox("Show live values", &showLiveValues))
 		{
@@ -1479,9 +1475,9 @@ namespace BetterCheats::Panels::Weapons
 
 		// The equipped weapon's real base stats, from its data asset -- not the
 		// inherited Au-layer attribute fields a previous build showed here, which
-		// the game never writes at all (confirmed permanently zero; see
-		// reviews/weapon-stats-and-reload.md Q1). Magazine shows the CAPTURED
-		// ORIGINAL, so it reads the same whether or not Magazine Size is active.
+		// the game never writes at all (confirmed permanently zero). Magazine
+		// shows the CAPTURED ORIGINAL, so it reads the same whether or not
+		// Magazine Size is active.
 		if (g_showLiveValues.load() && dbgMagMax >= 0.0f)
 		{
 			char dmg[32], rpm[32], mag[32], range[32];

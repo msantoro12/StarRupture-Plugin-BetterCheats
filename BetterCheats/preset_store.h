@@ -29,10 +29,6 @@
 // (preset_store.h/.cpp) is meant to be copied as-is into a new plugin, with
 // only the enclosing namespace renamed to match and the caller supplying
 // its own group names and Field sets. Nothing plugin-specific belongs here.
-//
-// Mirrored from BetterDrone's src/preset_store.h/.cpp (gss.21/BetterDrone
-// gss.18) -- keep the two copies identical apart from the namespace; a
-// change here belongs in both plugins, not just this one.
 namespace BetterCheats::PresetStore
 {
     // One named float value within a preset. A caller builds an array of
