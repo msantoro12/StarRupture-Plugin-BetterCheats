@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -400,12 +401,314 @@ namespace BetterCheats::Panels::Weapons
 					}
 				}
 
-				if (modifierCount == 0)
-					LOG_INFO("GrenadeDamageProbe: Modifiers is empty -- damage may come from Executions instead, or this GE isn't the right one.");
+			if (modifierCount == 0)
+				LOG_INFO("GrenadeDamageProbe: Modifiers is empty -- damage may come from Executions instead, or this GE isn't the right one.");
 			}
 			catch (...)
 			{
 				LOG_WARN("GrenadeDamageProbe: exception while reading the GameplayEffect -- its shape may differ from what was expected.");
+			}
+		}
+
+		// ---------------------------------------------------------------------
+		// Wide grenade-object probe: the first probe found
+		// GE_GrenadeProjectileDamage_C's own Modifiers array empty, so damage
+		// isn't stored there directly. This widens the search instead of
+		// guessing: every CDO whose class or object name contains "Grenade",
+		// every GameplayEffect among them dumped in full, the throw ability's
+		// own effect reference, and the projectile's known fields -- so the
+		// real location (a different GE, an Execution, a GEComponent, or a
+		// plain field next to TimeToExplode/DamageRadius) shows up in the log
+		// instead of being guessed at again. Read-only, one shot, game thread.
+		// ---------------------------------------------------------------------
+
+		// Case-insensitive substring test -- small and local, plain ASCII
+		// class/object names only, no need for a locale-aware string library.
+		bool ContainsCaseInsensitive(const char* haystack, const char* needle)
+		{
+			if (!haystack || !needle) return false;
+			const size_t hLen = strlen(haystack), nLen = strlen(needle);
+			if (nLen == 0 || nLen > hLen) return false;
+			for (size_t i = 0; i + nLen <= hLen; ++i)
+			{
+				size_t j = 0;
+				for (; j < nLen; ++j)
+				{
+					char a = haystack[i + j], b = needle[j];
+					if (a >= 'A' && a <= 'Z') a = static_cast<char>(a - 'A' + 'a');
+					if (b >= 'A' && b <= 'Z') b = static_cast<char>(b - 'A' + 'a');
+					if (a != b) break;
+				}
+				if (j == nLen) return true;
+			}
+			return false;
+		}
+
+		// Resolves and logs one named property by kind -- float/int/bool print
+		// their value directly; an object property also resolves and logs the
+		// pointed-to object's own name, not just a raw pointer. Missing or
+		// unreadable is logged too, never silently skipped, so the probe's own
+		// coverage is visible in the log rather than an absence that looks
+		// identical to "field doesn't exist."
+		void DumpNamedProperty(IPluginObjectProperties* props, void* object, const char* className, const char* propertyName)
+		{
+			PluginPropertyHandle property = props->FindPropertyByName(className, propertyName);
+			if (!property)
+			{
+				LOG_INFO("GrenadeDamageProbe:     %s::%s -- not found", className, propertyName);
+				return;
+			}
+
+			switch (props->GetPropertyKind(property))
+			{
+			case PluginPropertyKind::Float:
+			{
+				double value = 0.0;
+				if (props->GetFloatProperty(object, property, &value))
+					LOG_INFO("GrenadeDamageProbe:     %s::%s = %.4f (float)", className, propertyName, value);
+				else
+					LOG_INFO("GrenadeDamageProbe:     %s::%s -- float read failed", className, propertyName);
+				break;
+			}
+			case PluginPropertyKind::Int:
+			{
+				int64_t value = 0;
+				if (props->GetIntProperty(object, property, &value))
+					LOG_INFO("GrenadeDamageProbe:     %s::%s = %lld (int)", className, propertyName, static_cast<long long>(value));
+				else
+					LOG_INFO("GrenadeDamageProbe:     %s::%s -- int read failed", className, propertyName);
+				break;
+			}
+			case PluginPropertyKind::Bool:
+			{
+				bool value = false;
+				if (props->GetBoolProperty(object, property, &value))
+					LOG_INFO("GrenadeDamageProbe:     %s::%s = %s (bool)", className, propertyName, value ? "true" : "false");
+				else
+					LOG_INFO("GrenadeDamageProbe:     %s::%s -- bool read failed", className, propertyName);
+				break;
+			}
+			case PluginPropertyKind::Object:
+			{
+				void* value = nullptr;
+				if (!props->GetObjectProperty(object, property, &value))
+				{
+					LOG_INFO("GrenadeDamageProbe:     %s::%s -- object read failed (kind reported Object; may "
+						"actually be a class/TSubclassOf property the typed getter doesn't cover)", className, propertyName);
+					break;
+				}
+				if (!value)
+				{
+					LOG_INFO("GrenadeDamageProbe:     %s::%s = null (object)", className, propertyName);
+					break;
+				}
+				std::string objName = "<unreadable>";
+				try { objName = reinterpret_cast<SDK::UObject*>(value)->GetName(); } catch (...) {}
+				LOG_INFO("GrenadeDamageProbe:     %s::%s = %p '%s' (object)", className, propertyName, value, objName.c_str());
+				break;
+			}
+			default:
+				LOG_INFO("GrenadeDamageProbe:     %s::%s -- kind %d, no typed accessor here",
+					className, propertyName, static_cast<int>(props->GetPropertyKind(property)));
+				break;
+			}
+		}
+
+		// One GameplayEffect's modifiers, executions, and any conditional/
+		// granted-effect/component arrays that actually have entries. Detail
+		// rows are capped per-GE so one large effect can't blow the whole
+		// probe's output budget.
+		void DumpGrenadeGameplayEffect(SDK::UGameplayEffect* ge, const char* objectName)
+		{
+			if (!ge) return;
+
+			try
+			{
+				const int modifierCount  = ge->Modifiers.Num();
+				const int executionCount = ge->Executions.Num();
+				LOG_INFO("GrenadeDamageProbe:   [GE] object='%s' durationPolicy=%d modifiers=%d executions=%d",
+					objectName, static_cast<int>(ge->DurationPolicy), modifierCount, executionCount);
+
+				constexpr int kMaxDetailRows = 6;
+
+				for (int i = 0; i < modifierCount && i < kMaxDetailRows; ++i)
+				{
+					const SDK::FGameplayModifierInfo& mod = ge->Modifiers[i];
+					std::string attrName = "<unreadable>";
+					try { attrName = mod.Attribute.AttributeName.ToString(); } catch (...) {}
+					const auto calcType = mod.ModifierMagnitude.MagnitudeCalculationType;
+					LOG_INFO("GrenadeDamageProbe:     modifier[%d] attribute='%s' op=%d magnitudeCalc=%d",
+						i, attrName.c_str(), static_cast<int>(mod.ModifierOp), static_cast<int>(calcType));
+
+					if (calcType == SDK::EGameplayEffectMagnitudeCalculation::ScalableFloat)
+					{
+						const SDK::FScalableFloat& sf = mod.ModifierMagnitude.ScalableFloatMagnitude;
+						LOG_INFO("GrenadeDamageProbe:       scalableFloat.Value=%.4f curveTable=%p",
+							sf.Value, reinterpret_cast<void*>(sf.Curve.CurveTable));
+					}
+					else if (calcType == SDK::EGameplayEffectMagnitudeCalculation::SetByCaller)
+					{
+						std::string dataName = "<unreadable>";
+						try { dataName = mod.ModifierMagnitude.SetByCallerMagnitude.DataName.ToString(); } catch (...) {}
+						LOG_INFO("GrenadeDamageProbe:       setByCaller.DataName='%s'", dataName.c_str());
+					}
+				}
+
+				for (int i = 0; i < executionCount && i < kMaxDetailRows; ++i)
+				{
+					const SDK::FGameplayEffectExecutionDefinition& exec = ge->Executions[i];
+					std::string calcName = "<null>";
+					try
+					{
+						SDK::UClass* calcClass = exec.CalculationClass;
+						if (calcClass) calcName = calcClass->GetName();
+					}
+					catch (...) {}
+					LOG_INFO("GrenadeDamageProbe:     execution[%d] calculationClass='%s' scopedModifiers=%d conditionalEffects=%d",
+						i, calcName.c_str(), exec.CalculationModifiers.Num(), exec.ConditionalGameplayEffects.Num());
+				}
+
+				auto logArrayIfNonEmpty = [&](const char* name, int count)
+				{
+					if (count > 0)
+						LOG_INFO("GrenadeDamageProbe:     %s: %d entr%s", name, count, count == 1 ? "y" : "ies");
+				};
+				logArrayIfNonEmpty("ConditionalGameplayEffects", ge->ConditionalGameplayEffects.Num());
+				logArrayIfNonEmpty("OverflowEffects", ge->OverflowEffects.Num());
+				logArrayIfNonEmpty("GrantedAbilities", ge->GrantedAbilities.Num());
+
+				const int componentCount = ge->GEComponents.Num();
+				if (componentCount > 0)
+				{
+					LOG_INFO("GrenadeDamageProbe:     GEComponents: %d entries", componentCount);
+					for (int c = 0; c < componentCount && c < kMaxDetailRows; ++c)
+					{
+						SDK::UGameplayEffectComponent* comp = ge->GEComponents[c];
+						std::string compClass = "<null>";
+						try { if (comp && comp->Class) compClass = comp->Class->GetName(); } catch (...) {}
+						LOG_INFO("GrenadeDamageProbe:       [%d] class='%s'", c, compClass.c_str());
+					}
+				}
+			}
+			catch (...)
+			{
+				LOG_WARN("GrenadeDamageProbe: exception dumping GE '%s'.", objectName ? objectName : "?");
+			}
+		}
+
+		bool  g_probedGrenadeObjectsWide = false;
+		float g_grenadeObjectsWideCooldown = 0.0f;
+
+		void ProbeGrenadeObjectsWideOnce(float deltaSeconds)
+		{
+			if (g_probedGrenadeObjectsWide) return;
+
+			g_grenadeObjectsWideCooldown -= deltaSeconds;
+			if (g_grenadeObjectsWideCooldown > 0.0f) return;
+			g_grenadeObjectsWideCooldown = kGrenadeGlobalRetryInterval;
+
+			IPluginHooks* hooks = GetHooks();
+			IPluginObjectWalker*     walker = hooks ? hooks->ObjectWalker     : nullptr;
+			IPluginObjectProperties* props  = hooks ? hooks->ObjectProperties : nullptr;
+			if (!walker || !props || !walker->IsReady() || !props->IsReady())
+				return;   // not ready yet -- try again next cooldown
+
+			g_probedGrenadeObjectsWide = true;   // one real attempt only
+
+			try
+			{
+				LOG_INFO("GrenadeDamageProbe: ---- wide object scan ----");
+
+				// Part 1: every CDO whose class or object name contains "Grenade".
+				constexpr int kWalkCapacity = 16384;
+				std::vector<PluginObjectInfo> infos(kWalkCapacity);
+				const int totalCdoCount = walker->WalkAllObjectsInto(PluginObjectLookup_CDOOnly, infos.data(), kWalkCapacity);
+				const int scanned = (totalCdoCount < kWalkCapacity) ? totalCdoCount : kWalkCapacity;
+				if (totalCdoCount > kWalkCapacity)
+					LOG_WARN("GrenadeDamageProbe: %d CDOs total, only scanned the first %d.", totalCdoCount, kWalkCapacity);
+
+				constexpr int kMaxListed = 30;
+				int listed = 0;
+				std::vector<PluginObjectInfo> grenadeCdos;
+				for (int i = 0; i < scanned; ++i)
+				{
+					const PluginObjectInfo& info = infos[i];
+					if (!ContainsCaseInsensitive(info.className, "Grenade") && !ContainsCaseInsensitive(info.objectName, "Grenade"))
+						continue;
+					grenadeCdos.push_back(info);
+					if (listed < kMaxListed)
+					{
+						LOG_INFO("GrenadeDamageProbe:   [CDO] class='%s' object='%s'", info.className, info.objectName);
+						++listed;
+					}
+				}
+				if (static_cast<int>(grenadeCdos.size()) > kMaxListed)
+					LOG_INFO("GrenadeDamageProbe:   ... and %d more Grenade-named CDO(s) not listed.",
+						static_cast<int>(grenadeCdos.size()) - kMaxListed);
+
+				// Part 2: every one of those that IS-A UGameplayEffect gets its
+				// modifiers/executions/arrays dumped. UGameplayEffect is a stable
+				// native engine struct (unlike the Blueprint projectile/ability
+				// classes below), so casting the CDO pointer straight to it is
+				// safe -- same reasoning as the first probe.
+				SDK::UClass* geClass = SDK::UGameplayEffect::StaticClass();
+				int geDumped = 0;
+				constexpr int kMaxGEsDumped = 20;
+				for (const PluginObjectInfo& info : grenadeCdos)
+				{
+					if (geDumped >= kMaxGEsDumped) break;
+					if (!info.object) continue;
+
+					bool isGE = false;
+					try
+					{
+						SDK::UObject* obj = reinterpret_cast<SDK::UObject*>(info.object);
+						isGE = geClass && obj->IsA(geClass);
+					}
+					catch (...) {}
+					if (!isGE) continue;
+
+					DumpGrenadeGameplayEffect(reinterpret_cast<SDK::UGameplayEffect*>(info.object), info.objectName);
+					++geDumped;
+				}
+
+				// Part 3: the throw ability's own class/object-typed reference --
+				// resolved by name, not cast, since GA_ThrowGrenade_C is Blueprint-
+				// generated and its layout in this client build is unverified.
+				void* throwAbility = walker->FindFirstObjectByName("Default__GA_ThrowGrenade_C");
+				if (throwAbility)
+				{
+					LOG_INFO("GrenadeDamageProbe:   [ability] Default__GA_ThrowGrenade_C:");
+					DumpNamedProperty(props, throwAbility, "GA_ThrowGrenade_C", "CostEffect");
+				}
+				else
+				{
+					LOG_INFO("GrenadeDamageProbe:   GA_ThrowGrenade_C CDO not found.");
+				}
+
+				// Part 4: the projectile's own known fields -- also by name, same
+				// reasoning as part 3.
+				void* projectile = walker->FindFirstObjectByName("Default__BP_GrenadeProjectile_C");
+				if (projectile)
+				{
+					LOG_INFO("GrenadeDamageProbe:   [projectile] Default__BP_GrenadeProjectile_C:");
+					static const char* kProjectileFields[] = {
+						"TimeToExplode", "TimeToStopAndRise", "DamageRadius",
+						"MaxNumBounces", "NumBounces", "DamageGE", "FriendlyDamageGE",
+					};
+					for (const char* field : kProjectileFields)
+						DumpNamedProperty(props, projectile, "BP_GrenadeProjectile_C", field);
+				}
+				else
+				{
+					LOG_INFO("GrenadeDamageProbe:   BP_GrenadeProjectile_C CDO not found.");
+				}
+
+				LOG_INFO("GrenadeDamageProbe: ---- end wide object scan ----");
+			}
+			catch (...)
+			{
+				LOG_WARN("GrenadeDamageProbe: exception during the wide object scan.");
 			}
 		}
 
@@ -1176,6 +1479,7 @@ namespace BetterCheats::Panels::Weapons
 			}
 
 			ProbeGrenadeDamageOnce(deltaSeconds);
+			ProbeGrenadeObjectsWideOnce(deltaSeconds);
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
 			// tick if written directly; the unreplicated Cr multiplier is what sticks.
