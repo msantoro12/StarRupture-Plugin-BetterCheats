@@ -8,51 +8,60 @@ namespace BetterCheats::AOB
 	{
 		ResolvedAddresses g_resolved;
 
-		void ResolveOptional(IPluginSelf* self, IPluginHookScanner* scanner,
+		// Every address in this file is the entry point of a compiled function --
+		// each one is either called directly or has a detour written over it --
+		// so they all declare PLUGIN_SCAN_FUNCTION_START. That is the whole point
+		// of the kind: a pattern that lands 0x37 bytes into an unrelated function
+		// still matches, and without a kind the loader hands that address back.
+		//
+		// Optional is a label on the report line, not a lighter verdict: a miss
+		// refuses the plugin either way. It marks the addresses the feature
+		// modules genuinely null-check.
+		void ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
 			uintptr_t& out, const char* hookName, const char* pattern)
 		{
-			out = scanner->ResolveOptional(self, hookName, pattern);
+			PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
+			req.hookName = hookName;
+			req.pattern  = pattern;
+			req.kind     = PLUGIN_SCAN_FUNCTION_START;
+			req.flags    = PLUGIN_SCAN_FLAG_OPTIONAL;
+
+			out = scanner->Resolve(self, &req);
 			if (!out)
-				LOG_WARN("AOB: %s did not resolve — the feature using it will be unavailable.", hookName);
+				LOG_WARN("AOB: %s did not resolve - the feature using it will be unavailable.", hookName);
 		}
 
 #if BETTERCHEATS_DEV_BUILD
-		// The InitCheatManager prologue is generic enough to appear elsewhere in the
-		// image, so take every match and only accept an unambiguous one. Raw scans
-		// record nothing with the loader, hence the explicit ReportWarning.
+		// The InitCheatManager prologue is generic enough to appear elsewhere in
+		// the image, which used to mean scanning for every match by hand and
+		// refusing an ambiguous one. The loader does both now: a pattern that
+		// matches twice is a failure it reports (listing each match with the
+		// function it landed in), and FUNCTION_START rejects a match that is not
+		// a real function entry -- which is what makes calling it with a
+		// UCheatManager* in RCX safe.
 		void ResolveInitCheatManager(IPluginSelf* self, IPluginHookScanner* scanner)
 		{
 			static constexpr const char* kHookName = "UCheatManager::InitCheatManager";
 
-			uintptr_t matches[8] = {};
-			const int count = scanner->FindAllPatternsInMainModule(
-				self, CheatManager_InitCheatManager, matches, 8);
+			PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
+			req.hookName = kHookName;
+			req.pattern  = CheatManager_InitCheatManager;
+			req.kind     = PLUGIN_SCAN_FUNCTION_START;
+			req.flags    = PLUGIN_SCAN_FLAG_OPTIONAL;
 
-			if (count <= 0)
+			const uintptr_t addr = scanner->Resolve(self, &req);
+			if (!addr)
 			{
-				scanner->ReportWarning(self, kHookName,
-					"Pattern not found — dev menu falls back to ReceiveInitCheatManager only.");
-				LOG_WARN("DevMenus: UCheatManager::InitCheatManager pattern not found - "
+				LOG_WARN("DevMenus: UCheatManager::InitCheatManager unresolved - "
 					"falling back to ReceiveInitCheatManager only.");
 				return;
 			}
 
+			g_resolved.CheatManager_InitCheatManager = addr;
+
 			const uintptr_t base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
-
-			if (count > 1)
-			{
-				scanner->ReportWarning(self, kHookName,
-					"Pattern is ambiguous (multiple matches) — refusing to call it. Narrow the pattern in aob_patterns.h.");
-				LOG_WARN("DevMenus: UCheatManager::InitCheatManager pattern is ambiguous (%d matches) - "
-					"refusing to call it. Narrow the pattern in aob_patterns.h.", count);
-				for (int i = 0; i < count && i < 8; ++i)
-					LOG_WARN("DevMenus:   candidate %d at RVA 0x%llX.", i, static_cast<unsigned long long>(matches[i] - base));
-				return;
-			}
-
-			g_resolved.CheatManager_InitCheatManager = matches[0];
 			LOG_INFO("DevMenus: resolved UCheatManager::InitCheatManager at RVA 0x%llX (expected 0x47BA90 for the dumped build).",
-				static_cast<unsigned long long>(matches[0] - base));
+				static_cast<unsigned long long>(addr - base));
 		}
 #endif
 	}
@@ -64,44 +73,44 @@ namespace BetterCheats::AOB
 		if (!self || !scanner)
 			return;
 
-		ResolveOptional(self, scanner, g_resolved.HealthHud_SetupProgressBar,
+		ResolveFunction(self, scanner, g_resolved.HealthHud_SetupProgressBar,
 			"UCrUW_HealthHud::SetupProgressBar", HealthHud_SetupProgressBar);
 
-		ResolveOptional(self, scanner, g_resolved.GetResourceConditionResult,
+		ResolveFunction(self, scanner, g_resolved.GetResourceConditionResult,
 			"UCrBuildingComponent::GetResourceConditionResult", GetResourceConditionResult);
-		ResolveOptional(self, scanner, g_resolved.CheckAvailableBuildings,
+		ResolveFunction(self, scanner, g_resolved.CheckAvailableBuildings,
 			"ACrTechnologyKeeper::CheckAvailableBuildings", CheckAvailableBuildings);
-		ResolveOptional(self, scanner, g_resolved.IsRecipeUnlocked,
+		ResolveFunction(self, scanner, g_resolved.IsRecipeUnlocked,
 			"ACrCraftingRecipeOwner::IsRecipeUnlocked", IsRecipeUnlocked);
-		ResolveOptional(self, scanner, g_resolved.CheckStability_Custom,
+		ResolveFunction(self, scanner, g_resolved.CheckStability_Custom,
 			"ACrAPHelperActorCustom::CheckStability", CheckStability_Custom);
-		ResolveOptional(self, scanner, g_resolved.CheckStability_DynamicPillar,
+		ResolveFunction(self, scanner, g_resolved.CheckStability_DynamicPillar,
 			"ACrAPHelperDynamicPillar::CheckStability", CheckStability_DynamicPillar);
 
-		ResolveOptional(self, scanner, g_resolved.GetMiningDamage,
+		ResolveFunction(self, scanner, g_resolved.GetMiningDamage,
 			"UCrMiningToolComponent::GetMiningDamage", GetMiningDamage);
-		ResolveOptional(self, scanner, g_resolved.UpdateRepHarvesterHeatStack,
+		ResolveFunction(self, scanner, g_resolved.UpdateRepHarvesterHeatStack,
 			"UCrMiningToolComponent::UpdateRepHarvesterHeatStack", UpdateRepHarvesterHeatStack);
 
-		ResolveOptional(self, scanner, g_resolved.AddNewItem,
+		ResolveFunction(self, scanner, g_resolved.AddNewItem,
 			"UAuItemsComponent::AddNewItem", AddNewItem);
 
-		ResolveOptional(self, scanner, g_resolved.FMassEntityConfig_DestroyEntityTemplate,
+		ResolveFunction(self, scanner, g_resolved.FMassEntityConfig_DestroyEntityTemplate,
 			"FMassEntityConfig::DestroyEntityTemplate", FMassEntityConfig_DestroyEntityTemplate);
-		ResolveOptional(self, scanner, g_resolved.FMassEntityConfig_GetOrCreateEntityTemplate,
+		ResolveFunction(self, scanner, g_resolved.FMassEntityConfig_GetOrCreateEntityTemplate,
 			"FMassEntityConfig::GetOrCreateEntityTemplate", FMassEntityConfig_GetOrCreateEntityTemplate);
-		ResolveOptional(self, scanner, g_resolved.UWorld_GetMassEntitySubsystem,
+		ResolveFunction(self, scanner, g_resolved.UWorld_GetMassEntitySubsystem,
 			"UWorld::GetSubsystem<UMassEntitySubsystem>", UWorld_GetMassEntitySubsystem);
-		ResolveOptional(self, scanner, g_resolved.FMassEntityManager_ConstSharedFragments_FindOrAdd,
+		ResolveFunction(self, scanner, g_resolved.FMassEntityManager_ConstSharedFragments_FindOrAdd,
 			"TSharedFragmentsContainer<FConstSharedStruct>::FindOrAdd", FMassEntityManager_ConstSharedFragments_FindOrAdd);
-		ResolveOptional(self, scanner, g_resolved.StructUtils_GetStructInstanceCrc32,
+		ResolveFunction(self, scanner, g_resolved.StructUtils_GetStructInstanceCrc32,
 			"UE::StructUtils::GetStructInstanceCrc32", StructUtils_GetStructInstanceCrc32);
 
-		ResolveOptional(self, scanner, g_resolved.FWeakObjectPtr_AssignFObjectPtr,
+		ResolveFunction(self, scanner, g_resolved.FWeakObjectPtr_AssignFObjectPtr,
 			"FWeakObjectPtr::operator=(FObjectPtr)", FWeakObjectPtr_AssignFObjectPtr);
-		ResolveOptional(self, scanner, g_resolved.UMassActorSubsystem_GetEntityHandleFromActor,
+		ResolveFunction(self, scanner, g_resolved.UMassActorSubsystem_GetEntityHandleFromActor,
 			"UMassActorSubsystem::GetEntityHandleFromActor", UMassActorSubsystem_GetEntityHandleFromActor);
-		ResolveOptional(self, scanner, g_resolved.FMassEntityManager_InternalGetFragmentDataPtr,
+		ResolveFunction(self, scanner, g_resolved.FMassEntityManager_InternalGetFragmentDataPtr,
 			"FMassEntityManager::InternalGetFragmentDataPtr", FMassEntityManager_InternalGetFragmentDataPtr);
 
 #if BETTERCHEATS_DEV_BUILD

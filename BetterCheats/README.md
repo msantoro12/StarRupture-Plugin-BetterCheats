@@ -131,10 +131,21 @@ Pattern scanning is only legal inside `OnPluginLoadHooks`, which runs before
 — `self->hooks` is null during the event, and a missed *required* pattern makes
 the loader refuse the plugin outright.
 
+Declare what the pattern is supposed to land on. `Resolve` checks the address
+against the executable's structure, so a pattern that drifted into the middle of
+an unrelated function is a reported failure instead of a detour written over the
+wrong bytes. A pattern must also match exactly once.
+
 ```cpp
 void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
 {
-    g_address = scan->ResolveOptional(self, "AMyClass::DoThing", "48 89 5C 24 ?? 57");
+    PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
+    req.hookName = "AMyClass::DoThing";
+    req.pattern  = "48 89 5C 24 ?? 57";
+    req.kind     = PLUGIN_SCAN_FUNCTION_START;   // never leave this unset
+    req.flags    = PLUGIN_SCAN_FLAG_OPTIONAL;    // label on the report, not a lighter verdict
+
+    g_address = scan->Resolve(self, &req);       // 0 on failure, already reported
 }
 ```
 
