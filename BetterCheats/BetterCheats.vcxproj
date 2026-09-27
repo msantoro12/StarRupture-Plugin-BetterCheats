@@ -165,6 +165,7 @@
     <ClInclude Include="player_building.h" />
     <ClInclude Include="player_inventory.h" />
     <ClInclude Include="player_items.h" />
+    <ClInclude Include="object_ref.h" />
     <ClInclude Include="player_lookup.h" />
     <ClInclude Include="player_movement.h" />
     <ClInclude Include="player_skills.h" />
