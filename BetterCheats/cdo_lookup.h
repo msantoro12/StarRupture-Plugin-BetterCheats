@@ -78,8 +78,9 @@ namespace BetterCheats
 			return nullptr;
 
 		IPluginHooks* hooks = GetHooks();
-		IPluginObjectProperties* props = hooks ? hooks->ObjectProperties : nullptr;
-		if (!props || !props->IsReady())
+		IPluginObjectWalker*     walker = hooks ? hooks->ObjectWalker     : nullptr;
+		IPluginObjectProperties* props  = hooks ? hooks->ObjectProperties : nullptr;
+		if (!walker || !props || !walker->IsReady() || !props->IsReady())
 			return nullptr;   // not ready yet -- try again next cooldown
 
 		char cdoName[160];
