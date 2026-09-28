@@ -127,7 +127,7 @@ namespace BetterCheats::ItemRegistry
 		return parms.ReturnValue;
 	}
 
-	SDK::UAuItemDataBase* ResolveItemFromBlueprintAsset(const SDK::FAssetData& assetData, bool verbose)
+	SDK::UObject* ResolveBlueprintCDO(const SDK::FAssetData& assetData, bool verbose)
 	{
 		if (!ResolveEngineLookupFunctions())
 			return nullptr;
@@ -176,11 +176,22 @@ namespace BetterCheats::ItemRegistry
 				LOG_DEBUG("ItemRegistry:   [%s] ClassDefaultObject is null.", assetName.c_str());
 			return nullptr;
 		}
+
+		return cdo;
+	}
+
+	SDK::UAuItemDataBase* ResolveItemFromBlueprintAsset(const SDK::FAssetData& assetData, bool verbose)
+	{
+		SDK::UObject* cdo = ResolveBlueprintCDO(assetData, verbose);
+		if (!cdo)
+			return nullptr;
+
 		if (!cdo->IsA(SDK::UAuItemDataBase::StaticClass()))
 		{
 			if (verbose)
-				LOG_DEBUG("ItemRegistry:   [%s] CDO '%s' is not a UAuItemDataBase (class '%s').", assetName.c_str(),
-					cdo->GetName().c_str(), cdo->Class ? cdo->Class->GetName().c_str() : "<none>");
+				LOG_DEBUG("ItemRegistry:   [%s] CDO '%s' is not a UAuItemDataBase (class '%s').",
+					assetData.AssetName.ToString().c_str(), cdo->GetName().c_str(),
+					cdo->Class ? cdo->Class->GetName().c_str() : "<none>");
 			return nullptr;
 		}
 

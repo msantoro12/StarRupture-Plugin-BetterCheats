@@ -33,12 +33,20 @@ namespace BetterCheats::ItemRegistry
 	bool GetAssetsByClass(SDK::IAssetRegistry* registry, const SDK::FTopLevelAssetPath& classPath,
 		SDK::TArray<SDK::FAssetData>& outAssets);
 
-	// Force-loads the Blueprint's package and resolves it down to the
-	// UAuItemDataBase CDO -- package -> generated "<AssetName>_C" class ->
+	// Force-loads the Blueprint's package and resolves it down to its
+	// generated class's CDO -- package -> generated "<AssetName>_C" class ->
 	// ClassDefaultObject. Returns null (without throwing) for anything that
-	// doesn't resolve; pass verbose=true to log why at each step. Also the
-	// right call to re-resolve a CDO fresh right before a write: the one
-	// cached at scan time can be garbage-collected if its Blueprint class/
-	// package gets unloaded in the meantime.
+	// doesn't resolve; pass verbose=true to log why at each step. No class
+	// check here -- ResolveItemFromBlueprintAsset (below) adds the
+	// UAuItemDataBase check; a caller after a different Blueprint-actor base
+	// (e.g. the gatherable-actor scan in player_inventory.cpp, keyed on
+	// ACrGatherableBaseActor instead of AuItemBlueprint) does its own IsA
+	// check on the result. Also the right call to re-resolve a CDO fresh
+	// right before a write: the one cached at scan time can be garbage-
+	// collected if its Blueprint class/package gets unloaded in the meantime.
+	SDK::UObject* ResolveBlueprintCDO(const SDK::FAssetData& assetData, bool verbose);
+
+	// ResolveBlueprintCDO() plus the UAuItemDataBase check both existing
+	// callers (Item Spawner, Inventory's stack-size scan) actually want.
 	SDK::UAuItemDataBase* ResolveItemFromBlueprintAsset(const SDK::FAssetData& assetData, bool verbose);
 }

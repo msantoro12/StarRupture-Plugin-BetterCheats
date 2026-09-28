@@ -1515,6 +1515,313 @@ namespace BetterCheats::Panels::Inventory
 		}
 	}
 
+		// =====================================================================
+		// Plant Pickup (wild-plant gather multiplier)
+		// =====================================================================
+		// Scales ACrGatherableBaseActor::ResourceCount -- the per-type reward
+		// count a simple, non-crop gatherable (a plant/mushroom/rock picked up
+		// off the ground) hands out, set BlueprintReadOnly/DisableEditOnInstance
+		// on the Blueprint CDO, exactly the same shape MaxStack has on item CDOs
+		// above (see drafts/drone-and-gather-research.md's gather section).
+		// Crops (ACrGatherableCropActor, regrowing bushes) are a different
+		// interface with no per-harvest count field and are out of scope here.
+		//
+		// One global multiplier only -- no per-item overrides or category tiers,
+		// unlike the stack-size scaler above; the owner asked for a single slider
+		// capped at 5x. Otherwise this follows the exact same pattern: an
+		// item_registry.h-style asset-registry scan (ResolveBlueprintCDO, keyed
+		// on ACrGatherableBaseActor instead of AuItemBlueprint), ObjectRef-
+		// checked CDOs (object_ref.h), and ComposedAttribute + ApplyComposedRow
+		// (attribute_compose.h) for the capture/write/restore/persist sequence --
+		// the same machinery that survives a RELOAD whose PluginShutdown runs on
+		// the render thread instead of the game thread (see Shutdown() below).
+
+		// `actor` is an ObjectRef, checked before every read or write: the scan
+		// force-loads each Blueprint's package and nothing keeps it loaded, so a
+		// garbage collection (a world travel always runs one) can free the CDO
+		// while this list still holds it -- same reasoning as StackEntry::item.
+		struct GatherEntry
+		{
+			ObjectRef<SDK::ACrGatherableBaseActor> actor;
+			std::string assetName;              // identity key, e.g. "BP_Berry"
+			int         originalResourceCount = 0; // captured at scan time, the true base
+		};
+
+		std::mutex               g_pendingGatherMutex;
+		std::vector<GatherEntry> g_pendingGatherItems;
+		bool                     g_pendingGatherReady = false;
+		std::atomic<bool>        g_gatherRefreshInFlight{ false };
+
+		std::vector<GatherEntry> g_gatherItems;           // render-thread owned (UI count)
+		bool                     g_gatherItemsLoaded  = false;
+		std::vector<GatherEntry> g_gatherItemsGameThread; // game-thread owned (apply pass)
+
+		// Owner decision (drafts/drone-and-gather-research.md, 2026-09-27):
+		// "don't let it go past 5. thats too many." 1x is the floor -- this
+		// is a reward multiplier, not a way to make plants worse.
+		constexpr float kGatherMultDefault = 1.0f;
+		constexpr float kGatherMultMin     = 1.0f;
+		constexpr float kGatherMultMax     = 5.0f;
+
+		// Sanity clamp on the multiplied result, same spirit as kStackCeiling
+		// above -- ResourceCount is a plain int32 with no engine-side range
+		// check of its own.
+		constexpr int kGatherResourceCeiling = 1000000;
+
+		std::atomic<float> g_gatherMultiplier{ kGatherMultDefault };
+
+		// Per-entry compose state, game-thread only -- never touched from
+		// RenderImGui. Keyed by assetName, one CDO per Blueprint type, same
+		// shape as g_stackComposed.
+		struct GatherComposeState
+		{
+			BetterCheats::ComposedAttribute        composed;
+			ObjectRef<SDK::ACrGatherableBaseActor> actor;
+		};
+		std::unordered_map<std::string, GatherComposeState> g_gatherComposed;
+
+		SDK::FTopLevelAssetPath GatherableBlueprintClassPath()
+		{
+			SDK::FString packagePath(L"/Script/Chimera");
+			SDK::FString className(L"CrGatherableBaseActor");
+			return SDK::UKismetSystemLibrary::MakeTopLevelAssetPath(packagePath, className);
+		}
+
+		// Mirrors RefreshStackListOnGameThread -- same asset-registry pass
+		// (item_registry.h's now-shared ResolveBlueprintCDO), a different
+		// base class and a much smaller per-entry payload since there is no
+		// per-item UI here, only a global multiplier.
+		void RefreshGatherListOnGameThread(void* /*context*/)
+		{
+			std::vector<GatherEntry> items;
+
+			LOG_INFO("Inventory: refreshing gatherable list for plant pickup from the asset registry...");
+
+			try
+			{
+				SDK::IAssetRegistry* registry = BetterCheats::ItemRegistry::GetAssetRegistry();
+				if (!registry)
+				{
+					LOG_WARN("Inventory: could not resolve the asset registry for plant pickup.");
+				}
+				else
+				{
+					SDK::TArray<SDK::FAssetData> assetData;
+					if (!BetterCheats::ItemRegistry::GetAssetsByClass(registry,
+						GatherableBlueprintClassPath(), assetData))
+					{
+						LOG_WARN("Inventory: IAssetRegistry::GetAssetsByClass failed for plant pickup.");
+					}
+
+					const int rawCount = assetData.Num();
+					int unresolvedCount = 0;
+
+					for (int i = 0; i < rawCount; ++i)
+					{
+						SDK::UObject* cdo = BetterCheats::ItemRegistry::ResolveBlueprintCDO(assetData[i], false);
+						if (!cdo || !cdo->IsA(SDK::ACrGatherableBaseActor::StaticClass()))
+						{
+							++unresolvedCount;
+							continue;
+						}
+
+						SDK::ACrGatherableBaseActor* actor = static_cast<SDK::ACrGatherableBaseActor*>(cdo);
+
+						// Nothing to scale on a type with no reward (e.g. an
+						// abstract/placeholder base Blueprint) -- skip rather than
+						// force a floor of 1 onto something that means "none".
+						if (actor->ResourceCount <= 0)
+							continue;
+
+						GatherEntry entry;
+						entry.actor.Set(actor);
+						entry.assetName            = assetData[i].AssetName.ToString();
+						entry.originalResourceCount = actor->ResourceCount;
+
+						items.push_back(std::move(entry));
+					}
+
+					if (unresolvedCount > 0)
+						LOG_INFO("Inventory: %d Blueprint asset(s) could not be resolved for plant pickup.", unresolvedCount);
+
+					std::sort(items.begin(), items.end(),
+						[](const GatherEntry& a, const GatherEntry& b) { return a.assetName < b.assetName; });
+
+					LOG_INFO("Inventory: loaded %d gatherable type(s) for plant pickup.", static_cast<int>(items.size()));
+				}
+			}
+			catch (...)
+			{
+				LOG_DEBUG("Inventory: exception while resolving gatherables for plant pickup.");
+			}
+
+			// Game-thread copy for the apply pass, ahead of the render-thread
+			// hand-off below -- Tick() must never block on g_pendingGatherMutex.
+			g_gatherItemsGameThread = items;
+
+			std::lock_guard<std::mutex> lock(g_pendingGatherMutex);
+			g_pendingGatherItems = std::move(items);
+			g_pendingGatherReady = true;
+			g_gatherRefreshInFlight.store(false, std::memory_order_release);
+		}
+
+		void RequestRefreshGatherList()
+		{
+			bool expected = false;
+			if (!g_gatherRefreshInFlight.compare_exchange_strong(expected, true))
+				return;
+
+			IPluginHooks* hooks = GetHooks();
+			if (!hooks)
+			{
+				g_gatherRefreshInFlight.store(false, std::memory_order_release);
+				return;
+			}
+
+			hooks->Engine->PostToGameThread(&RefreshGatherListOnGameThread, nullptr);
+		}
+
+		void AdoptPendingGatherItemsIfReady()
+		{
+			std::vector<GatherEntry> incoming;
+			{
+				std::lock_guard<std::mutex> lock(g_pendingGatherMutex);
+				if (!g_pendingGatherReady)
+					return;
+				incoming = std::move(g_pendingGatherItems);
+				g_pendingGatherItems.clear();
+				g_pendingGatherReady = false;
+			}
+
+			g_gatherItems       = std::move(incoming);
+			g_gatherItemsLoaded = true;
+		}
+
+		// Game thread only. Writes ResourceCount for every scanned gatherable
+		// whose desired value (captured original x the global multiplier,
+		// rounded to the nearest whole item) differs from that original.
+		// Cheap: this walks the already-resolved list, no asset-registry work
+		// here, so running it every tick is fine (mirrors ApplyStackSizes).
+		void ApplyGatherMultiplier()
+		{
+			if (g_gatherItemsGameThread.empty())
+				return;
+
+			const float multiplier = g_gatherMultiplier.load();
+
+			try
+			{
+				for (const GatherEntry& e : g_gatherItemsGameThread)
+				{
+					GatherComposeState& state = g_gatherComposed[e.assetName];
+
+					// Unloaded since the scan. Whatever we wrote went with it, so
+					// there is nothing to hand back either.
+					SDK::ACrGatherableBaseActor* actor = e.actor.Get();
+					if (!actor)
+					{
+						state.composed.Forget();
+						state.actor.Reset();
+						continue;
+					}
+
+					// Round to the nearest whole item -- ResourceCount is an
+					// integer count, same "+0.5f then truncate" convention the
+					// stack-size scaler uses below.
+					int desired = static_cast<int>(static_cast<float>(e.originalResourceCount) * multiplier + 0.5f);
+					if (desired < e.originalResourceCount)   desired = e.originalResourceCount; // multiplier floor is 1x
+					if (desired > kGatherResourceCeiling)     desired = kGatherResourceCeiling;
+					const bool active = desired != e.originalResourceCount;
+
+					state.actor.Set(actor);
+
+					float valueF = static_cast<float>(actor->ResourceCount);
+					const std::string key = "playerInventory.gather." + SanitizeStackKey(e.assetName);
+
+					BetterCheats::ApplyComposedRow(state.composed, actor, valueF, key, active,
+						static_cast<float>(desired), BetterCheats::ComposedAttribute::Mode::Absolute,
+						1.0f, static_cast<float>(kGatherResourceCeiling));
+
+					const int newValue = static_cast<int>(valueF + 0.5f);
+					if (actor->ResourceCount != newValue)
+						actor->ResourceCount = newValue;
+				}
+			}
+			catch (...) {}
+		}
+
+		// Render thread. Single global multiplier row -- follows the same
+		// BuildRow shape as the Weapons tab's rows and the stack-size
+		// multiplier row above.
+		void RenderPlantPickup(IModLoaderImGui* imgui)
+		{
+			imgui->Spacing();
+			imgui->Separator();
+			imgui->SeparatorText("Plant Pickup");
+			imgui->TextDisabled("Scales how many items a wild plant/mushroom/rock hands out when\n"
+			                    "picked up. Crops (regrowing bushes) are not covered by this.");
+			imgui->Spacing();
+
+			AdoptPendingGatherItemsIfReady();
+			if (!g_gatherItemsLoaded)
+				RequestRefreshGatherList();
+
+			if (!g_gatherItemsLoaded)
+			{
+				imgui->TextDisabled("Loading gatherable list from the asset registry...");
+				return;
+			}
+
+			if (g_gatherItems.empty())
+			{
+				imgui->TextDisabled("No gatherable types found.");
+				return;
+			}
+
+			float multiplier = g_gatherMultiplier.load();
+			if (imgui->BeginTable("##gather_mult_table", 3, kTableFlags))
+			{
+				const float labelReserve = BetterCheats::UI::PrescanLabelWidth(imgui, 1,
+					[](int) { return "Plant Pickup"; });
+
+				imgui->TableSetupColumn("Attribute", kColumnFixed,
+					BetterCheats::UI::GetReadoutColumnWidth(imgui, labelReserve));
+				imgui->TableSetupColumn("Value", 0, 0.54f);
+				imgui->TableSetupColumn("",      0, 0.10f);
+
+				imgui->TableNextRow(0, 0.0f);
+
+				char tooltip[192];
+				snprintf(tooltip, sizeof(tooltip),
+					"Multiplies every wild gatherable's captured original ResourceCount.\n"
+					"%d gatherable type%s found. Capped at %.0fx.",
+					static_cast<int>(g_gatherItems.size()), g_gatherItems.size() == 1 ? "" : "s", kGatherMultMax);
+
+				BetterCheats::UI::RowSpec spec;
+				spec.label        = "Plant Pickup";
+				spec.tooltip      = tooltip;
+				spec.value        = &multiplier;
+				spec.minValue     = kGatherMultMin;
+				spec.maxValue     = kGatherMultMax;
+				spec.step         = 0.10f;
+				spec.format       = "%.2fx";
+				spec.resetValue   = kGatherMultDefault;
+				spec.active       = BetterCheats::DiffersFromDefault(multiplier, kGatherMultDefault);
+				spec.labelReserve = labelReserve;
+
+				if (BetterCheats::UI::BuildRow(imgui, spec).changed)
+				{
+					// BuildRow already clamped both the slider and the typed box
+					// to [kGatherMultMin, kGatherMultMax] -- the owner's "never
+					// past 5" cap holds regardless of which control changed it.
+					g_gatherMultiplier.store(multiplier);
+					SessionConfig::Set("playerInventory.gather.multiplier", multiplier);
+				}
+
+				imgui->EndTable();
+			}
+		}
+
 	void Initialize()
 	{
 		IPluginSelf* self = GetSelf();
@@ -1568,6 +1875,8 @@ namespace BetterCheats::Panels::Inventory
 		{
 			for (auto& kv : g_stackComposed)
 				kv.second.composed.Forget();
+			for (auto& kv : g_gatherComposed)
+				kv.second.composed.Forget();
 			return;
 		}
 
@@ -1589,6 +1898,26 @@ namespace BetterCheats::Panels::Inventory
 			}
 		}
 		catch (...) {}
+
+		// Plant Pickup: same render-thread-Shutdown hazard, same fix.
+		try
+		{
+			for (auto& kv : g_gatherComposed)
+			{
+				GatherComposeState& state = kv.second;
+				SDK::ACrGatherableBaseActor* actor = state.actor.Get();
+				if (!actor) continue;
+
+				float valueF = static_cast<float>(actor->ResourceCount);
+				state.composed.Release(actor, valueF);
+				const int newValue = static_cast<int>(valueF + 0.5f);
+				if (actor->ResourceCount != newValue)
+					actor->ResourceCount = newValue;
+
+				BetterCheats::ClearComposeState("playerInventory.gather." + SanitizeStackKey(kv.first));
+			}
+		}
+		catch (...) {}
 	}
 
 	void Tick(float deltaSeconds)
@@ -1600,6 +1929,7 @@ namespace BetterCheats::Panels::Inventory
 		RefreshSnapshot();
 
 		ApplyStackSizes();
+		ApplyGatherMultiplier();
 	}
 
 	void ApplySavedConfig()
@@ -1681,6 +2011,14 @@ namespace BetterCheats::Panels::Inventory
 		g_stackItemsGameThread.clear();
 		g_stackComposed.clear();
 		RequestRefreshStackList();
+
+		// Plant Pickup -- same reasoning as the stack-size reload above: a
+		// fresh scan is the only way to know each gatherable's true original
+		// ResourceCount before this session's Tick() writes anything.
+		g_gatherMultiplier.store(SessionConfig::Get("playerInventory.gather.multiplier", kGatherMultDefault));
+		g_gatherItemsGameThread.clear();
+		g_gatherComposed.clear();
+		RequestRefreshGatherList();
 	}
 
 	void RenderImGui(IModLoaderImGui* imgui)
@@ -1805,5 +2143,6 @@ namespace BetterCheats::Panels::Inventory
 		imgui->TextDisabled("Console: bc_invsize <columns> <rows>");
 
 		RenderItemStackSizes(imgui);
+		RenderPlantPickup(imgui);
 	}
 }
