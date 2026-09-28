@@ -91,6 +91,9 @@
     <ClInclude Include="attribute_compose.h">
       <Filter>Plugin Core\Helpers</Filter>
     </ClInclude>
+    <ClInclude Include="cdo_lookup.h">
+      <Filter>Plugin Core\Helpers</Filter>
+    </ClInclude>
     <ClInclude Include="cheat_math.h">
       <Filter>Plugin Core\Helpers</Filter>
     </ClInclude>
