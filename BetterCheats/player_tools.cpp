@@ -137,8 +137,9 @@ namespace BetterCheats::Panels::Tools
 		std::atomic<bool>  g_statResolved[kStatCount];
 		std::atomic<float> g_statOriginal[kStatCount];     // the field before our change, in its own units
 		std::atomic<float> g_statCurrent[kStatCount];      // the field right now
-		std::atomic<float> g_statMods[kStatCount];         // the game's multiplier over the field while in hand, 1 = none
-		std::atomic<float> g_statCachedMods[kStatCount];   // mods last seen in hand, as SetMultiplyReadout's cachedMods
+		// The game's multiplier over the field, 1 = none. Only refreshed while
+		// the tool is in hand, so it doubles as "last seen" for the estimate.
+		std::atomic<float> g_statMods[kStatCount] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 		std::atomic<bool>  g_toolEquipped{ false };
 
 		// UCrMiningBoostAttributeSet on the character, a plain attribute write
@@ -616,7 +617,9 @@ namespace BetterCheats::Panels::Tools
 				// the whole field, ours included, so theirs is what's left.
 				readout.unmodified = amount * mods - (amount - 1.0f);
 				readout.game       = fieldRatio * mods;
-				readout.cachedMods = g_statCachedMods[s].load();
+				// unmodified - base in SetMultiplyReadout's terms, using the current
+				// slider value, not the one in effect when the mods were read.
+				readout.cachedMods = amount * (mods - 1.0f);
 				readout.amount     = value;
 				readout.active     = active;
 				readout.realBase   = (s == kStatHitRate) ? 1.0f / original : original;
@@ -752,13 +755,7 @@ namespace BetterCheats::Panels::Tools
 			if (equipped && weapons)
 			{
 				for (int s = 0; s < kStatCount; ++s)
-				{
-					const float mods   = ModsMultiplier(weapons, kStats[s].mods);
-					const float amount = StatActive(SliderValue(s)) ? SliderValue(s) : 1.0f;
-					g_statMods[s].store(mods);
-					// unmodified - base in SetMultiplyReadout's terms -- see RenderStatRow.
-					g_statCachedMods[s].store(amount * (mods - 1.0f));
-				}
+					g_statMods[s].store(ModsMultiplier(weapons, kStats[s].mods));
 			}
 		}
 		catch (...) {}
