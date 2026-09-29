@@ -1644,7 +1644,7 @@ namespace BetterCheats::Panels::Inventory
 		std::atomic<bool> g_gatherScanNow{ true };     // plugin start, new session
 		std::atomic<bool> g_gatherPanelOpen{ false };  // keeps the rescan going while the panel shows
 
-		// Owner cap: never past 5x. 1x is the floor -- this is a reward
+		// Capped at 5x. 1x is the floor -- this is a reward
 		// multiplier, not a way to make plants worse. Whole steps only: a
 		// fractional multiplier would round a one-item plant to a half.
 		constexpr float kGatherMultDefault = 1.0f;
