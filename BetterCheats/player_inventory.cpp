@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
@@ -1625,7 +1626,8 @@ namespace BetterCheats::Panels::Inventory
 		std::atomic<bool> g_gatherPanelOpen{ false };  // keeps the rescan going while the panel shows
 
 		// Owner cap: never past 5x. 1x is the floor -- this is a reward
-		// multiplier, not a way to make plants worse.
+		// multiplier, not a way to make plants worse. Whole steps only: a
+		// fractional multiplier would round a one-item plant to a half.
 		constexpr float kGatherMultDefault = 1.0f;
 		constexpr float kGatherMultMin     = 1.0f;
 		constexpr float kGatherMultMax     = 5.0f;
@@ -1646,7 +1648,7 @@ namespace BetterCheats::Panels::Inventory
 		{
 			if (!(value >= kGatherMultMin)) return kGatherMultMin;   // also catches NaN
 			if (value > kGatherMultMax)     return kGatherMultMax;
-			return value;
+			return std::round(value);
 		}
 
 		// Game thread only. Binds every loaded gatherable Blueprint class's
@@ -1798,7 +1800,7 @@ namespace BetterCheats::Panels::Inventory
 		}
 
 		// Render thread. Single global multiplier row, same BuildRow shape as
-		// the stack-size multiplier row above.
+		// the stack-size rows.
 		void RenderPlantPickup(IModLoaderImGui* imgui)
 		{
 			g_gatherPanelOpen.store(true);
@@ -1836,17 +1838,18 @@ namespace BetterCheats::Panels::Inventory
 				spec.value        = &multiplier;
 				spec.minValue     = kGatherMultMin;
 				spec.maxValue     = kGatherMultMax;
-				spec.step         = 0.10f;
-				spec.format       = "%.2fx";
+				spec.step         = 1.0f;
+				spec.format       = "%.0fx";
+				spec.wholeNumbers = true;
 				spec.resetValue   = kGatherMultDefault;
 				spec.active       = BetterCheats::DiffersFromDefault(multiplier, kGatherMultDefault);
 				spec.labelReserve = labelReserve;
 
-				// BuildRow clamps both the slider and the typed box to the range.
+				// BuildRow rounds and clamps both the slider and the typed box.
 				if (BetterCheats::UI::BuildRow(imgui, spec).changed)
 				{
 					g_gatherMultiplier.store(multiplier);
-					SessionConfig::Set("playerInventory.gather.multiplier", multiplier);
+					SessionConfig::Set("playerInventory.gather.multiplier", static_cast<int>(multiplier));
 				}
 
 				imgui->EndTable();
@@ -2159,7 +2162,8 @@ namespace BetterCheats::Panels::Inventory
 		imgui->Spacing();
 		imgui->TextDisabled("Console: bc_invsize <columns> <rows>");
 
-		RenderItemStackSizes(imgui);
+		// Plant Pickup first: the stack list below fills the rest of the panel.
 		RenderPlantPickup(imgui);
+		RenderItemStackSizes(imgui);
 	}
 }
