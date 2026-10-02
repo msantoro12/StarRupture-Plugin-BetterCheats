@@ -70,6 +70,45 @@ namespace BetterCheats::Panels::Building
 		}
 
 		// -------------------------------------------------------------------------
+		// Build Windows Anywhere
+		// ACrAPHelperActorCustom::GetHelperConditionResult is the helper's own
+		// verdict on a placement (sockets, collision, snapped and connected
+		// buildings). Window pieces are the four Viewport building IDs, the same
+		// range the game itself branches on in ConfirmPlacement. The original
+		// always runs, so whatever it updates on the helper stays current; only
+		// the verdict for a window is forced to Valid. Resources, base-core area,
+		// distance and the habitat flags are checked by the caller afterwards and
+		// still apply.
+		// -------------------------------------------------------------------------
+
+		using GetHelperConditionResultFn = uint8_t(__fastcall*)(void* self, const void* placementData, const void* transform);
+
+		GetHelperConditionResultFn g_originalGetHelperConditionResult = nullptr;
+		HookHandle                 g_hookGetHelperConditionResult      = nullptr;
+		bool                       g_buildWindowsAnywhere              = false;
+
+		bool IsWindowPiece(const void* placementData)
+		{
+			if (!placementData)
+				return false;
+
+			const SDK::ECrBuildingID id = static_cast<const SDK::UAuActorPlacementData*>(placementData)->BuildingID;
+			return id == SDK::ECrBuildingID::ViewportLeft
+				|| id == SDK::ECrBuildingID::ViewportMiddle
+				|| id == SDK::ECrBuildingID::ViewportRight
+				|| id == SDK::ECrBuildingID::ViewportSingle;
+		}
+
+		uint8_t __fastcall Detour_GetHelperConditionResult(void* self, const void* placementData, const void* transform)
+		{
+			uint8_t result = g_originalGetHelperConditionResult(self, placementData, transform);
+			if (g_buildWindowsAnywhere && IsWindowPiece(placementData))
+				return 1; // EAuAPlacementConditionResult::Valid
+
+			return result;
+		}
+
+		// -------------------------------------------------------------------------
 		// Unlock All Buildings
 		// ACrTechnologyKeeper::bUnlockAllBuildings (0x03A8) short-circuits
 		// IsBuildingAvailable to return true unconditionally. Setting the flag alone
@@ -243,6 +282,24 @@ namespace BetterCheats::Panels::Building
 			else
 				LOG_INFO("Building: CheckStability_DynamicPillar hook installed");
 		}
+
+		uintptr_t helperConditionAddr = aob.GetHelperConditionResult_Custom;
+		if (!helperConditionAddr)
+		{
+			LOG_WARN("Building: GetHelperConditionResult unresolved — build windows anywhere unavailable");
+		}
+		else
+		{
+			g_hookGetHelperConditionResult = hooks->Install(
+				helperConditionAddr,
+				reinterpret_cast<void*>(&Detour_GetHelperConditionResult),
+				reinterpret_cast<void**>(&g_originalGetHelperConditionResult));
+
+			if (!g_hookGetHelperConditionResult)
+				LOG_WARN("Building: failed to install GetHelperConditionResult hook");
+			else
+				LOG_INFO("Building: GetHelperConditionResult hook installed");
+		}
 	}
 
 	void Shutdown()
@@ -277,6 +334,14 @@ namespace BetterCheats::Panels::Building
 			g_originalCheckStabilityDynamicPillar = nullptr;
 		}
 		g_noStabilityCheck = false;
+
+		if (hooks && g_hookGetHelperConditionResult)
+		{
+			hooks->Remove(g_hookGetHelperConditionResult);
+			g_hookGetHelperConditionResult     = nullptr;
+			g_originalGetHelperConditionResult = nullptr;
+		}
+		g_buildWindowsAnywhere = false;
 
 		if (g_unlockAllBuildings)
 		{
@@ -343,6 +408,7 @@ namespace BetterCheats::Panels::Building
 		g_noStabilityCheck   = SessionConfig::Get("playerBuilding.noStabilityCheck", false);
 		g_unlockAllBuildings = SessionConfig::Get("playerBuilding.unlockAllBuildings", false);
 		g_unlockAllRecipes   = SessionConfig::Get("playerBuilding.unlockAllRecipes", false);
+		g_buildWindowsAnywhere = SessionConfig::Get("playerBuilding.buildWindowsAnywhere", false);
 
 		LOG_INFO("Building: applied saved config for session '%s'.", SessionConfig::GetSessionName().c_str());
 	}
@@ -356,7 +422,7 @@ namespace BetterCheats::Panels::Building
 		// same "above every control" position every group uses.
 		{
 			static BetterCheats::UI::SavedPresetRowState s_presetRow;
-			constexpr int kFieldCount = 4;
+			constexpr int kFieldCount = 5;
 			BetterCheats::PresetStore::Field fields[kFieldCount];
 
 			auto getLive = [](BetterCheats::PresetStore::Field* out)
@@ -365,6 +431,7 @@ namespace BetterCheats::Panels::Building
 				out[1] = { "noStabilityCheck",    g_noStabilityCheck    ? 1.0f : 0.0f };
 				out[2] = { "unlockAllBuildings",  g_unlockAllBuildings  ? 1.0f : 0.0f };
 				out[3] = { "unlockAllRecipes",    g_unlockAllRecipes    ? 1.0f : 0.0f };
+				out[4] = { "buildWindowsAnywhere", g_buildWindowsAnywhere ? 1.0f : 0.0f };
 			};
 			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
 			{
@@ -372,6 +439,7 @@ namespace BetterCheats::Panels::Building
 				if (count > 1) { g_noStabilityCheck   = f[1].value != 0.0f; SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck); }
 				if (count > 2) { g_unlockAllBuildings = f[2].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllBuildings", g_unlockAllBuildings); }
 				if (count > 3) { g_unlockAllRecipes   = f[3].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllRecipes", g_unlockAllRecipes); }
+				if (count > 4) { g_buildWindowsAnywhere = f[4].value != 0.0f; SessionConfig::Set("playerBuilding.buildWindowsAnywhere", g_buildWindowsAnywhere); }
 			};
 			auto isBuiltin      = [](const char*) { return false; };
 			auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
@@ -401,6 +469,13 @@ namespace BetterCheats::Panels::Building
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##no_stability_check", &g_noStabilityCheck))
 				SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck);
+
+			imgui->TableNextRow(0, 0.0f);
+			imgui->TableSetColumnIndex(0);
+			imgui->Text("Build Windows Anywhere");
+			imgui->TableSetColumnIndex(1);
+			if (imgui->Checkbox("##build_windows_anywhere", &g_buildWindowsAnywhere))
+				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", g_buildWindowsAnywhere);
 
 			imgui->EndTable();
 		}

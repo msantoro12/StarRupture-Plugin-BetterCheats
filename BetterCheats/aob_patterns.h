@@ -119,6 +119,21 @@ namespace BetterCheats::AOB
 		"40 56 48 83 EC ?? 48 83 B9 ?? ?? ?? ?? ?? 48 8B F1 75 ?? 32 C0";
 
 
+	// Class::Function  ACrAPHelperActorCustom::GetHelperConditionResult
+	// Parameters       (ACrAPHelperActorCustom* this, const UAuActorPlacementData* PlacementData,
+	//                   const FTransform* Transform) -> EAuAPlacementConditionResult
+	// The placement helper's own verdict (sockets, collision, snapped and
+	// connected buildings), reached through the vtable from
+	// ACrAPHelper::UpdatePlacementConditionResult. Resources, base-core area,
+	// distance and the habitat flags are checked after it returns, so they still
+	// apply. Hooked to force Valid for the window pieces (the Viewport building
+	// IDs) when Build Windows Anywhere is on; every other building passes through.
+	// Frame size, the stack cookie and the member offset are wildcarded.
+	constexpr const char* GetHelperConditionResult_Custom =
+		"40 55 53 57 41 55 41 57 48 8D AC 24 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? "
+		"48 33 C4 48 89 85 ?? ?? ?? ?? 48 83 B9 ?? ?? ?? ?? 00 49 8B F8 4C 8B FA";
+
+
 	// Class::Function  ACrTechnologyKeeper::CheckAvailableBuildings
 	// Parameters       (ACrTechnologyKeeper* this, UCrCorporationData* Corporation, int64_t Reputation)
 	// Rebuilds AvailableBuildings from AllBuildings, filtering by research state.

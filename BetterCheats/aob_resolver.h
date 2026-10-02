@@ -42,6 +42,7 @@ namespace BetterCheats::AOB
 		uintptr_t IsRecipeUnlocked              = 0;
 		uintptr_t CheckStability_Custom         = 0;
 		uintptr_t CheckStability_DynamicPillar  = 0;
+		uintptr_t GetHelperConditionResult_Custom = 0;
 
 		// Tools
 		uintptr_t GetMiningDamage               = 0;

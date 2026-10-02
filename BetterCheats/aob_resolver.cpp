@@ -86,6 +86,8 @@ namespace BetterCheats::AOB
 			"ACrAPHelperActorCustom::CheckStability", CheckStability_Custom);
 		ResolveFunction(self, scanner, g_resolved.CheckStability_DynamicPillar,
 			"ACrAPHelperDynamicPillar::CheckStability", CheckStability_DynamicPillar);
+		ResolveFunction(self, scanner, g_resolved.GetHelperConditionResult_Custom,
+			"ACrAPHelperActorCustom::GetHelperConditionResult", GetHelperConditionResult_Custom);
 
 		ResolveFunction(self, scanner, g_resolved.GetMiningDamage,
 			"UCrMiningToolComponent::GetMiningDamage", GetMiningDamage);
