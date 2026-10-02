@@ -8,6 +8,7 @@
 #include "Chimera_classes.hpp"
 #include "Engine_classes.hpp"
 
+#include <atomic>
 #include <cstdint>
 
 namespace BetterCheats::Panels::Building
@@ -74,25 +75,29 @@ namespace BetterCheats::Panels::Building
 		// ACrAPHelperActorCustom::GetHelperConditionResult is the helper's own
 		// verdict on a placement (sockets, collision, snapped and connected
 		// buildings). Window pieces are the four Viewport building IDs, the same
-		// range the game itself branches on in ConfirmPlacement. The original
-		// always runs, so whatever it updates on the helper stays current; only
-		// the verdict for a window is forced to Valid. Resources, base-core area,
-		// distance and the habitat flags are checked by the caller afterwards and
-		// still apply.
+		// range the game itself branches on in ConfirmPlacement. The ID is read
+		// from the helper being evaluated, as the original does, so an additional
+		// helper is judged on its own building. The original always runs, so
+		// whatever it updates on the helper stays current; only the verdict for a
+		// window is forced to Valid. Resources, base-core area, distance and the
+		// habitat flags are checked by the caller afterwards and still apply.
 		// -------------------------------------------------------------------------
 
 		using GetHelperConditionResultFn = uint8_t(__fastcall*)(void* self, const void* placementData, const void* transform);
 
 		GetHelperConditionResultFn g_originalGetHelperConditionResult = nullptr;
 		HookHandle                 g_hookGetHelperConditionResult      = nullptr;
-		bool                       g_buildWindowsAnywhere              = false;
 
-		bool IsWindowPiece(const void* placementData)
+		// Written from the render thread, read on the game thread.
+		std::atomic<bool> g_buildWindowsAnywhere{ false };
+
+		bool IsWindowPiece(const void* helper)
 		{
-			if (!placementData)
+			const SDK::UCrBuildingData* data = static_cast<const SDK::ACrAPHelper*>(helper)->BuildingData;
+			if (!data)
 				return false;
 
-			const SDK::ECrBuildingID id = static_cast<const SDK::UAuActorPlacementData*>(placementData)->BuildingID;
+			const SDK::ECrBuildingID id = data->BuildingID;
 			return id == SDK::ECrBuildingID::ViewportLeft
 				|| id == SDK::ECrBuildingID::ViewportMiddle
 				|| id == SDK::ECrBuildingID::ViewportRight
@@ -102,7 +107,7 @@ namespace BetterCheats::Panels::Building
 		uint8_t __fastcall Detour_GetHelperConditionResult(void* self, const void* placementData, const void* transform)
 		{
 			uint8_t result = g_originalGetHelperConditionResult(self, placementData, transform);
-			if (g_buildWindowsAnywhere && IsWindowPiece(placementData))
+			if (g_buildWindowsAnywhere.load() && IsWindowPiece(self))
 				return 1; // EAuAPlacementConditionResult::Valid
 
 			return result;
@@ -427,11 +432,11 @@ namespace BetterCheats::Panels::Building
 
 			auto getLive = [](BetterCheats::PresetStore::Field* out)
 			{
-				out[0] = { "noBuildCost",         g_noBuildCost         ? 1.0f : 0.0f };
-				out[1] = { "noStabilityCheck",    g_noStabilityCheck    ? 1.0f : 0.0f };
-				out[2] = { "unlockAllBuildings",  g_unlockAllBuildings  ? 1.0f : 0.0f };
-				out[3] = { "unlockAllRecipes",    g_unlockAllRecipes    ? 1.0f : 0.0f };
-				out[4] = { "buildWindowsAnywhere", g_buildWindowsAnywhere ? 1.0f : 0.0f };
+				out[0] = { "noBuildCost",          g_noBuildCost                 ? 1.0f : 0.0f };
+				out[1] = { "noStabilityCheck",     g_noStabilityCheck            ? 1.0f : 0.0f };
+				out[2] = { "unlockAllBuildings",   g_unlockAllBuildings          ? 1.0f : 0.0f };
+				out[3] = { "unlockAllRecipes",     g_unlockAllRecipes            ? 1.0f : 0.0f };
+				out[4] = { "buildWindowsAnywhere", g_buildWindowsAnywhere.load() ? 1.0f : 0.0f };
 			};
 			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
 			{
@@ -439,7 +444,12 @@ namespace BetterCheats::Panels::Building
 				if (count > 1) { g_noStabilityCheck   = f[1].value != 0.0f; SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck); }
 				if (count > 2) { g_unlockAllBuildings = f[2].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllBuildings", g_unlockAllBuildings); }
 				if (count > 3) { g_unlockAllRecipes   = f[3].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllRecipes", g_unlockAllRecipes); }
-				if (count > 4) { g_buildWindowsAnywhere = f[4].value != 0.0f; SessionConfig::Set("playerBuilding.buildWindowsAnywhere", g_buildWindowsAnywhere); }
+				if (count > 4)
+				{
+					const bool buildWindowsAnywhere = f[4].value != 0.0f;
+					g_buildWindowsAnywhere = buildWindowsAnywhere;
+					SessionConfig::Set("playerBuilding.buildWindowsAnywhere", buildWindowsAnywhere);
+				}
 			};
 			auto isBuiltin      = [](const char*) { return false; };
 			auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
@@ -474,8 +484,12 @@ namespace BetterCheats::Panels::Building
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Build Windows Anywhere");
 			imgui->TableSetColumnIndex(1);
-			if (imgui->Checkbox("##build_windows_anywhere", &g_buildWindowsAnywhere))
-				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", g_buildWindowsAnywhere);
+			bool buildWindowsAnywhere = g_buildWindowsAnywhere.load();
+			if (imgui->Checkbox("##build_windows_anywhere", &buildWindowsAnywhere))
+			{
+				g_buildWindowsAnywhere = buildWindowsAnywhere;
+				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", buildWindowsAnywhere);
+			}
 
 			imgui->EndTable();
 		}
