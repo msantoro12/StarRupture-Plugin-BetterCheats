@@ -8,7 +8,12 @@
 #include "Chimera_classes.hpp"
 #include "Engine_classes.hpp"
 
+#include <Windows.h>
+
+#include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <mutex>
 
 namespace BetterCheats::Panels::Building
 {
@@ -107,6 +112,99 @@ namespace BetterCheats::Panels::Building
 				return true;
 
 			return g_originalIsRecipeUnlocked(self, recipe);
+		}
+
+		// -------------------------------------------------------------------------
+		// Deconstruct Windows During Waves
+		// ACrPlayerControllerBase::FindDeconstructibleTarget refuses any building
+		// whose temperature is above 0, and a wave heats the habitat's windows. When
+		// it finds nothing, it runs once more with that one jump turned into a
+		// no-op, and the answer is kept only if it is a window, so every other
+		// heated building stays protected. The function reads only its inputs and
+		// writes nothing, so running it twice changes nothing else.
+		// -------------------------------------------------------------------------
+
+		using FindDeconstructibleTargetFn = SDK::AActor*(__fastcall*)(SDK::ACrPlayerControllerBase* self, const void* traceData);
+
+		FindDeconstructibleTargetFn g_originalFindDeconstructibleTarget = nullptr;
+		HookHandle                  g_hookFindDeconstructibleTarget     = nullptr;
+		uint8_t*                    g_heatGate                          = nullptr;
+		uint8_t                     g_heatGateBytes[2]                  = {};
+		std::mutex                  g_heatGateLock;
+		std::atomic<bool>           g_deconstructWindowsDuringWaves{ false };
+
+		bool IsWindow(SDK::AActor* actor)
+		{
+			SDK::UClass* buildingClass = SDK::ACrBuildingActorBase::StaticClass();
+			if (!actor || !buildingClass || !actor->IsA(buildingClass))
+				return false;
+
+			const SDK::ECrBuildingID id = static_cast<SDK::ACrBuildingActorBase*>(actor)->GetBuildingID();
+			return id == SDK::ECrBuildingID::ViewportLeft  || id == SDK::ECrBuildingID::ViewportMiddle
+			    || id == SDK::ECrBuildingID::ViewportRight || id == SDK::ECrBuildingID::ViewportSingle;
+		}
+
+		// IPluginMemoryUtils::Patch logs every write, and this flips the jump on
+		// every call, so it writes the two bytes itself. The lock keeps Shutdown,
+		// which can run on the render thread, from interleaving its page-protection
+		// change with the game thread's.
+		bool WriteHeatGate(const uint8_t (&bytes)[2])
+		{
+			std::lock_guard<std::mutex> lock(g_heatGateLock);
+
+			DWORD oldProtect = 0;
+			if (!VirtualProtect(g_heatGate, sizeof(bytes), PAGE_EXECUTE_READWRITE, &oldProtect))
+				return false;
+
+			memcpy(g_heatGate, bytes, sizeof(bytes));
+			VirtualProtect(g_heatGate, sizeof(bytes), oldProtect, &oldProtect);
+			FlushInstructionCache(GetCurrentProcess(), g_heatGate, sizeof(bytes));
+			return true;
+		}
+
+		class HeatGateBypass
+		{
+		public:
+			HeatGateBypass()
+			{
+				static constexpr uint8_t kNops[2] = { 0x90, 0x90 };
+				m_open = WriteHeatGate(kNops);
+			}
+			~HeatGateBypass()
+			{
+				if (m_open)
+					WriteHeatGate(g_heatGateBytes);
+			}
+			HeatGateBypass(const HeatGateBypass&) = delete;
+			HeatGateBypass& operator=(const HeatGateBypass&) = delete;
+
+			explicit operator bool() const { return m_open; }
+
+		private:
+			bool m_open = false;
+		};
+
+		SDK::AActor* __fastcall Detour_FindDeconstructibleTarget(SDK::ACrPlayerControllerBase* self, const void* traceData)
+		{
+			SDK::AActor* target = g_originalFindDeconstructibleTarget(self, traceData);
+			if (target || !g_deconstructWindowsDuringWaves.load())
+				return target;
+
+			{
+				HeatGateBypass bypass;
+				if (!bypass)
+					return nullptr;
+				target = g_originalFindDeconstructibleTarget(self, traceData);
+			}
+
+			try
+			{
+				return IsWindow(target) ? target : nullptr;
+			}
+			catch (...)
+			{
+				return nullptr;
+			}
 		}
 
 		// -------------------------------------------------------------------------
@@ -243,6 +341,22 @@ namespace BetterCheats::Panels::Building
 			else
 				LOG_INFO("Building: CheckStability_DynamicPillar hook installed");
 		}
+
+		// aob_resolver.cpp has already logged the line when this did not resolve.
+		if (aob.FindDeconstructibleTarget)
+		{
+			g_heatGate = reinterpret_cast<uint8_t*>(aob.FindDeconstructibleTarget_HeatGate);
+			memcpy(g_heatGateBytes, g_heatGate, sizeof(g_heatGateBytes));
+
+			g_hookFindDeconstructibleTarget = hooks->Install(
+				aob.FindDeconstructibleTarget,
+				reinterpret_cast<void*>(&Detour_FindDeconstructibleTarget),
+				reinterpret_cast<void**>(&g_originalFindDeconstructibleTarget));
+			if (!g_hookFindDeconstructibleTarget)
+				LOG_WARN("Building: failed to install FindDeconstructibleTarget hook - Deconstruct Windows During Waves stays off");
+			else
+				LOG_INFO("Building: FindDeconstructibleTarget hook installed");
+		}
 	}
 
 	void Shutdown()
@@ -277,6 +391,16 @@ namespace BetterCheats::Panels::Building
 			g_originalCheckStabilityDynamicPillar = nullptr;
 		}
 		g_noStabilityCheck = false;
+
+		if (hooks && g_hookFindDeconstructibleTarget)
+		{
+			hooks->Remove(g_hookFindDeconstructibleTarget);
+			g_hookFindDeconstructibleTarget     = nullptr;
+			g_originalFindDeconstructibleTarget = nullptr;
+		}
+		if (g_heatGate)
+			WriteHeatGate(g_heatGateBytes);
+		g_deconstructWindowsDuringWaves = false;
 
 		if (g_unlockAllBuildings)
 		{
@@ -343,6 +467,7 @@ namespace BetterCheats::Panels::Building
 		g_noStabilityCheck   = SessionConfig::Get("playerBuilding.noStabilityCheck", false);
 		g_unlockAllBuildings = SessionConfig::Get("playerBuilding.unlockAllBuildings", false);
 		g_unlockAllRecipes   = SessionConfig::Get("playerBuilding.unlockAllRecipes", false);
+		g_deconstructWindowsDuringWaves = SessionConfig::Get("playerBuilding.deconstructWindowsDuringWaves", false);
 
 		LOG_INFO("Building: applied saved config for session '%s'.", SessionConfig::GetSessionName().c_str());
 	}
@@ -356,7 +481,7 @@ namespace BetterCheats::Panels::Building
 		// same "above every control" position every group uses.
 		{
 			static BetterCheats::UI::SavedPresetRowState s_presetRow;
-			constexpr int kFieldCount = 4;
+			constexpr int kFieldCount = 5;
 			BetterCheats::PresetStore::Field fields[kFieldCount];
 
 			auto getLive = [](BetterCheats::PresetStore::Field* out)
@@ -365,6 +490,7 @@ namespace BetterCheats::Panels::Building
 				out[1] = { "noStabilityCheck",    g_noStabilityCheck    ? 1.0f : 0.0f };
 				out[2] = { "unlockAllBuildings",  g_unlockAllBuildings  ? 1.0f : 0.0f };
 				out[3] = { "unlockAllRecipes",    g_unlockAllRecipes    ? 1.0f : 0.0f };
+				out[4] = { "deconstructWindowsDuringWaves", g_deconstructWindowsDuringWaves.load() ? 1.0f : 0.0f };
 			};
 			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
 			{
@@ -372,6 +498,12 @@ namespace BetterCheats::Panels::Building
 				if (count > 1) { g_noStabilityCheck   = f[1].value != 0.0f; SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck); }
 				if (count > 2) { g_unlockAllBuildings = f[2].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllBuildings", g_unlockAllBuildings); }
 				if (count > 3) { g_unlockAllRecipes   = f[3].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllRecipes", g_unlockAllRecipes); }
+				if (count > 4)
+				{
+					const bool v = f[4].value != 0.0f;
+					g_deconstructWindowsDuringWaves = v;
+					SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", v);
+				}
 			};
 			auto isBuiltin      = [](const char*) { return false; };
 			auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
@@ -401,6 +533,18 @@ namespace BetterCheats::Panels::Building
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##no_stability_check", &g_noStabilityCheck))
 				SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck);
+
+			imgui->TableNextRow(0, 0.0f);
+			imgui->TableSetColumnIndex(0);
+			imgui->Text("Deconstruct Windows During Waves");
+			imgui->TableSetColumnIndex(1);
+			bool deconstructWindows = g_deconstructWindowsDuringWaves.load();
+			if (imgui->Checkbox("##deconstruct_windows_waves", &deconstructWindows))
+			{
+				g_deconstructWindowsDuringWaves = deconstructWindows;
+				SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", deconstructWindows);
+			}
+			imgui->SetItemTooltip("Lets habitat windows be deconstructed while a wave has heated them. Other heated buildings stay protected.");
 
 			imgui->EndTable();
 		}
