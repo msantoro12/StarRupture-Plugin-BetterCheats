@@ -2,6 +2,8 @@
 #include "aob_patterns.h"
 #include "plugin_helpers.h"
 
+#include <initializer_list>
+
 namespace BetterCheats::AOB
 {
 	namespace
@@ -29,6 +31,90 @@ namespace BetterCheats::AOB
 			out = scanner->Resolve(self, &req);
 			if (!out)
 				LOG_WARN("AOB: %s did not resolve - the feature using it will be unavailable.", hookName);
+		}
+
+		// The start of the function addr belongs to, following chained unwind
+		// entries back to their parent the way the loader's FUNCTION_START check
+		// does, so a cold chunk does not pass for a function of its own. 0 when
+		// no unwind data covers addr.
+		uintptr_t OwningFunctionStart(uintptr_t addr)
+		{
+			DWORD64 imageBase = 0;
+			PRUNTIME_FUNCTION entry = RtlLookupFunctionEntry(addr, &imageBase, nullptr);
+			for (int depth = 0; entry && depth < 32; ++depth)
+			{
+				const auto* unwind = reinterpret_cast<const uint8_t*>(imageBase + entry->UnwindData);
+				if (((unwind[0] >> 3) & UNW_FLAG_CHAININFO) == 0)
+					return static_cast<uintptr_t>(imageBase + entry->BeginAddress);
+
+				// The parent entry follows the unwind codes, padded to an even count.
+				const size_t codeSlots = (unwind[2] + 1u) & ~1u;
+				entry = reinterpret_cast<PRUNTIME_FUNCTION>(const_cast<uint8_t*>(unwind) + 4 + codeSlots * 2);
+			}
+			return 0;
+		}
+
+		uintptr_t FindUnique(IPluginSelf* self, IPluginHookScanner* scanner, const char* pattern)
+		{
+			uintptr_t hits[2] = {};
+			return scanner->FindAllPatternsInMainModule(self, pattern, hits, 2) == 1 ? hits[0] : 0;
+		}
+
+		struct ToggleScan
+		{
+			uintptr_t*  out;
+			const char* hookName;
+			const char* pattern;
+		};
+
+		// The habitat-window toggles are opt-in, so their patterns go through the
+		// raw scan, which records nothing with the loader: after a game update a
+		// miss turns that one toggle off instead of refusing the plugin. The same
+		// two verdicts as Resolve still apply -- exactly one match, and the match
+		// is a function entry -- and a group resolves all or nothing, with one
+		// line naming the toggle when it does not.
+		bool ResolveToggleGroup(IPluginSelf* self, IPluginHookScanner* scanner,
+			const char* toggle, std::initializer_list<ToggleScan> scans)
+		{
+			for (const ToggleScan& scan : scans)
+			{
+				const uintptr_t addr = FindUnique(self, scanner, scan.pattern);
+				if (!addr || OwningFunctionStart(addr) != addr)
+				{
+					for (const ToggleScan& reset : scans)
+						*reset.out = 0;
+					LOG_WARN("AOB: %s did not resolve - %s stays off.", scan.hookName, toggle);
+					return false;
+				}
+				*scan.out = addr;
+			}
+			return true;
+		}
+
+		// The heat gate is a jump inside FindDeconstructibleTarget, not a function
+		// entry, so it is checked differently: the match must sit in that function,
+		// and its short jb must land where the near jb opening the match (the
+		// infection gate) lands, which is the function's return-null path.
+		void ResolveHeatGate(IPluginSelf* self, IPluginHookScanner* scanner)
+		{
+			const uintptr_t match = FindUnique(self, scanner, FindDeconstructibleTarget_HeatGate);
+			bool ok = match && OwningFunctionStart(match) == g_resolved.FindDeconstructibleTarget;
+			if (ok)
+			{
+				const auto* code = reinterpret_cast<const uint8_t*>(match);
+				const uintptr_t nullPath   = match + 9 + *reinterpret_cast<const int32_t*>(code + 5);
+				const uintptr_t gateTarget = match + kHeatGateJumpOffset + 2 + static_cast<int8_t>(code[kHeatGateJumpOffset + 1]);
+				ok = gateTarget == nullPath;
+			}
+
+			if (!ok)
+			{
+				g_resolved.FindDeconstructibleTarget = 0;
+				LOG_WARN("AOB: ACrPlayerControllerBase::FindDeconstructibleTarget heat gate did not resolve - "
+					"Deconstruct Windows During Waves stays off.");
+				return;
+			}
+			g_resolved.FindDeconstructibleTarget_HeatGate = match + kHeatGateJumpOffset;
 		}
 
 #if BETTERCHEATS_DEV_BUILD
@@ -86,6 +172,27 @@ namespace BetterCheats::AOB
 			"ACrAPHelperActorCustom::CheckStability", CheckStability_Custom);
 		ResolveFunction(self, scanner, g_resolved.CheckStability_DynamicPillar,
 			"ACrAPHelperDynamicPillar::CheckStability", CheckStability_DynamicPillar);
+
+		ResolveToggleGroup(self, scanner, "Build Windows Anywhere", {
+			{ &g_resolved.GetSnappedSocket,
+				"UCrSocketSnapPlacementMethod::GetSnappedSocket", GetSnappedSocket },
+			{ &g_resolved.IsSocketFree,
+				"UCrBuildingStabilitySubsystem::IsSocketFree", IsSocketFree },
+			{ &g_resolved.PersistentEntityID_Construct,
+				"FCrMassPersistentEntityID::FCrMassPersistentEntityID", PersistentEntityID_Construct },
+			{ &g_resolved.PersistentEntityID_IsValidEntityHandle,
+				"FCrMassPersistentEntityID::IsValidEntityHandle", PersistentEntityID_IsValidEntityHandle },
+			{ &g_resolved.MassActorSubsystem_GetActorFromHandle,
+				"UMassActorSubsystem::GetActorFromHandle", MassActorSubsystem_GetActorFromHandle },
+		});
+
+		if (ResolveToggleGroup(self, scanner, "Deconstruct Windows During Waves", {
+			{ &g_resolved.FindDeconstructibleTarget,
+				"ACrPlayerControllerBase::FindDeconstructibleTarget", FindDeconstructibleTarget },
+		}))
+		{
+			ResolveHeatGate(self, scanner);
+		}
 
 		ResolveFunction(self, scanner, g_resolved.GetMiningDamage,
 			"UCrMiningToolComponent::GetMiningDamage", GetMiningDamage);

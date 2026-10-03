@@ -25,6 +25,10 @@
 // still earn their keep (a hook can fail to install, and a hot reload can land
 // mid-session), but a miss in the loader's startup failure report is a
 // build-breaking bug to fix here, not something the menu degrades around.
+//
+// The habitat-window patterns are the one exception: they back opt-in toggles,
+// so they are scanned without the loader recording anything, and a miss turns
+// that toggle off instead of refusing the plugin.
 // ---------------------------------------------------------------------------
 
 namespace BetterCheats::AOB
@@ -42,6 +46,17 @@ namespace BetterCheats::AOB
 		uintptr_t IsRecipeUnlocked              = 0;
 		uintptr_t CheckStability_Custom         = 0;
 		uintptr_t CheckStability_DynamicPillar  = 0;
+
+		// Habitat windows. Each group below is all-or-nothing: either every
+		// member resolved or all of them are 0.
+		uintptr_t GetSnappedSocket                       = 0;
+		uintptr_t IsSocketFree                           = 0;
+		uintptr_t PersistentEntityID_Construct           = 0;
+		uintptr_t PersistentEntityID_IsValidEntityHandle = 0;
+		uintptr_t MassActorSubsystem_GetActorFromHandle  = 0;
+
+		uintptr_t FindDeconstructibleTarget              = 0;
+		uintptr_t FindDeconstructibleTarget_HeatGate     = 0;
 
 		// Tools
 		uintptr_t GetMiningDamage               = 0;

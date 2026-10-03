@@ -134,6 +134,90 @@ namespace BetterCheats::AOB
 		"48 89 5C 24 ?? 57 48 83 EC ?? 80 B9 ?? ?? ?? ?? ?? 48 8B DA 48 8B F9 75 ?? 48 85 D2 0F 84";
 
 	// -------------------------------------------------------------------------
+	// Habitat windows
+	//
+	// These back two opt-in toggles, so aob_resolver.cpp scans them without
+	// recording a miss: a pattern that stops matching leaves its toggle off
+	// instead of refusing the whole plugin.
+	// -------------------------------------------------------------------------
+
+	// Class::Function  UCrSocketSnapPlacementMethod::GetSnappedSocket
+	// Parameters       (UCrSocketSnapPlacementMethod* this, const UAuActorPlacementData* PlacementData,
+	//                   void* a3, void* a4, void* a5, void* a6, void* a7, void* a8, float* a9, void* a10) -> AActor*
+	// Picks the socket a socket-snap piece attaches to, and is the only caller of
+	// IsSocketFree. PlacementData is the piece being placed (it may be null).
+	constexpr const char* GetSnappedSocket =
+		"4C 89 4C 24 20 48 89 54 24 10 48 89 4C 24 08 55 53 57 41 55 41 57 48 8D AC 24 ?? ?? ?? ?? "
+		"48 81 EC ?? ?? ?? ?? 48 8B 85 ?? ?? ?? ?? 33 FF 49 8B D9 4D 8B E8 4C 8B FA C6 40 08 00 48 89 78 28";
+
+	// Class::Function  UCrBuildingStabilitySubsystem::IsSocketFree
+	// Parameters       (UCrBuildingStabilitySubsystem* this, ACrCustomBuilding* Building, const UStaticMeshSocket* Socket) -> bool
+	// False when any entity is registered on Socket in Building's entry of the
+	// custom connection map. The pattern pins the map's layout read below:
+	// data at +0x120, count at +0x128, free count at +0x154, 0x88-byte elements.
+	constexpr const char* IsSocketFree =
+		"4C 89 44 24 18 55 53 56 57 41 56 41 57 48 8D 6C 24 ?? 48 81 EC ?? ?? ?? ?? 4C 8B FA 48 8B F1 "
+		"E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 33 FF 4C 8B F0 48 89 7D ?? 4D 85 FF 74 ?? 0F B6 0D ?? ?? ?? ?? "
+		"84 C9 74 ?? 49 8B CF E8 ?? ?? ?? ?? 0F B6 0D ?? ?? ?? ?? 48 89 7D ?? 4C 89 7D ?? 84 C9 74 ?? "
+		"49 8B CF E8 ?? ?? ?? ?? 48 8D 55 ?? 48 8D 4D ?? E8 ?? ?? ?? ?? 48 8B 5D ?? EB ?? 48 8B 5D ?? "
+		"49 39 7E 38 75 ?? 4C 8D 0D ?? ?? ?? ?? 41 B8 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? "
+		"E8 ?? ?? ?? ?? 84 C0 74 ?? 90 CC 49 8B 4E 38 48 8D 55 ?? 4C 8B C3 4C 89 A4 24 ?? ?? ?? ?? "
+		"E8 ?? ?? ?? ?? 48 8B 55 ?? 48 8D 4D ?? 4C 8B C6 E8 ?? ?? ?? ?? 8B 86 28 01 00 00 3B 86 54 01 00 00 "
+		"74 ?? 48 8B 96 60 01 00 00 48 8D 86 58 01 00 00 8B 8E 68 01 00 00 48 85 D2 44 8B 4D ?? 48 0F 44 D0 "
+		"FF C9 49 23 C9 44 8B 04 8A 41 8B C0 41 83 F8 FF 74 ?? 48 8B 96 20 01 00 00 0F 1F 80 00 00 00 00 "
+		"48 98 48 69 C8 88 00 00 00";
+
+	// UCrBuildingStabilitySubsystem — TMap<FCrMassPersistentEntityID,
+	// FCrCustomConnectionData>, every custom building's socket connections.
+	// The generated SDK folds it into Pad_30; IsSocketFree above pins it.
+	constexpr const std::ptrdiff_t kStabilityCustomConnectionsOffset = 0x120;
+
+	// UMassActorSubsystem — the actor manager (Pad_38 in the generated SDK).
+	// GetActorFromHandle dereferences it unchecked once its ensure has fired,
+	// so callers test it first, as IsSocketFree does.
+	constexpr const std::ptrdiff_t kMassActorManagerOffset = 0x38;
+
+	// Class::Function  FCrMassPersistentEntityID::FCrMassPersistentEntityID
+	// Parameters       (FCrMassPersistentEntityID* this, FMassEntityHandle Handle, const UObject* WorldContext)
+	// Leaves ID at 0xFFFFFFFF when the handle has no persistent ID.
+	constexpr const char* PersistentEntityID_Construct =
+		"48 89 5C 24 08 57 48 83 EC 40 33 C0 C7 01 FF FF FF FF 48 89 41 08 4D 8B C8 48 8B DA 48 8B F9 "
+		"85 D2 0F 84 ?? ?? ?? ?? 48 8B C2 48 C1 E8 20 85 C0 74 ?? 48 8B 0D ?? ?? ?? ?? 41 B8 01 00 00 00 "
+		"49 8B D1 E8 ?? ?? ?? ?? 48 85 C0 74 ?? 48 8B C8 E8";
+
+	// Class::Function  FCrMassPersistentEntityID::IsValidEntityHandle
+	// Parameters       (FCrMassPersistentEntityID* this, const UObject* WorldContext) -> bool
+	// Resolves ID to a live entity and writes it into this->CachedHandle.
+	constexpr const char* PersistentEntityID_IsValidEntityHandle =
+		"40 53 48 83 EC 20 83 39 FF 48 8B D9 75 08 32 C0 48 83 C4 20 5B C3 48 8B 0D ?? ?? ?? ?? "
+		"41 B8 01 00 00 00 48 89 7C 24 30 E8 ?? ?? ?? ?? 83 7B 08 00 48 8B F8 74 06 83 7B 0C 00 75";
+
+	// Class::Function  UMassActorSubsystem::GetActorFromHandle
+	// Parameters       (UMassActorSubsystem* this, FMassEntityHandle Handle, EActorAccess Access) -> AActor*
+	constexpr const char* MassActorSubsystem_GetActorFromHandle =
+		"48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 83 79 38 00 41 8B F0 48 8B DA 48 8B F9 75 ?? "
+		"4C 8D 0D ?? ?? ?? ?? 41 B8 ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? "
+		"84 C0 74 ?? 90 CC 48 8B 4F 38 44 8B C6 48 8B D3 48 8B 5C 24 30 48 8B 74 24 38 48 83 C4 20 5F E9";
+
+	// Class::Function  ACrPlayerControllerBase::FindDeconstructibleTarget
+	// Parameters       (ACrPlayerControllerBase* this, const FTraceDatum& TraceData) -> AActor*
+	// Scores the deconstruct trace's hits, then runs the winner through the
+	// tag, infection, heat, habitat-inside and airlock-inside gates; null when
+	// one of them refuses it. Reads nothing but its inputs and writes nothing.
+	constexpr const char* FindDeconstructibleTarget =
+		"48 8B C4 55 53 56 57 41 55 41 56 41 57 48 8D A8 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 0F 29 70 ?? "
+		"4C 8B FA 44 0F 29 48 ?? 4C 8B F1 44 0F 29 90 ?? ?? ?? ?? 33 F6 48 8B 01 FF 90 D8 07 00 00 84 C0 0F";
+
+	// Inside FindDeconstructibleTarget: the infection gate
+	// (`comiss xmm6,[rax]; jb <return null>`), then the temperature fragment
+	// lookup and the heat gate, whose 2-byte `jb <return null>` sits
+	// kHeatGateJumpOffset bytes into the match. Any temperature above 0 takes it.
+	constexpr const char* FindDeconstructibleTarget_HeatGate =
+		"0F 2F 30 0F 82 ?? ?? ?? ?? 48 8B 9D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4C 8B C0 48 8B D3 48 8B CE "
+		"E8 ?? ?? ?? ?? 48 85 C0 74 05 0F 2F 30 72 ?? 48 8B 07 48 8B CF FF 90 00 08 00 00";
+	constexpr const std::ptrdiff_t kHeatGateJumpOffset = 43;
+
+	// -------------------------------------------------------------------------
 	// Mining
 	// -------------------------------------------------------------------------
 

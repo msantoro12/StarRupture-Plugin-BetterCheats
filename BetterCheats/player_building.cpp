@@ -1,5 +1,6 @@
 #include "player_building.h"
 #include "plugin_helpers.h"
+#include "aob_patterns.h"
 #include "aob_resolver.h"
 #include "session_config.h"
 #include "ui_widgets.h"
@@ -7,8 +8,14 @@
 #include "AuActorPlacement_classes.hpp"
 #include "Chimera_classes.hpp"
 #include "Engine_classes.hpp"
+#include "MassActors_classes.hpp"
+#include "MassEntity_classes.hpp"
 
+#include <Windows.h>
+
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 
 namespace BetterCheats::Panels::Building
 {
@@ -107,6 +114,294 @@ namespace BetterCheats::Panels::Building
 				return true;
 
 			return g_originalIsRecipeUnlocked(self, recipe);
+		}
+
+		// -------------------------------------------------------------------------
+		// Habitat window pieces
+		// -------------------------------------------------------------------------
+
+		bool TryGetBuildingId(SDK::UObject* object, SDK::ECrBuildingID& out)
+		{
+			SDK::UClass* buildingClass = SDK::ACrBuildingActorBase::StaticClass();
+			if (!object || !buildingClass || !object->IsA(buildingClass))
+				return false;
+
+			out = static_cast<SDK::ACrBuildingActorBase*>(object)->GetBuildingID();
+			return true;
+		}
+
+		bool IsWindowId(SDK::ECrBuildingID id)
+		{
+			return id == SDK::ECrBuildingID::ViewportLeft  || id == SDK::ECrBuildingID::ViewportMiddle
+			    || id == SDK::ECrBuildingID::ViewportRight || id == SDK::ECrBuildingID::ViewportSingle;
+		}
+
+		bool IsWindow(SDK::UObject* object)
+		{
+			SDK::ECrBuildingID id{};
+			return TryGetBuildingId(object, id) && IsWindowId(id);
+		}
+
+		bool IsHabitat(SDK::UObject* object)
+		{
+			SDK::ECrBuildingID id{};
+			return TryGetBuildingId(object, id)
+			    && (id == SDK::ECrBuildingID::HabitatBig || id == SDK::ECrBuildingID::HabitatSmall);
+		}
+
+		// The machines a habitat wall comes with are the _Variant buildings.
+		bool IsHabitatMachine(SDK::UObject* object)
+		{
+			SDK::ECrBuildingID id{};
+			if (!TryGetBuildingId(object, id))
+				return false;
+
+			switch (id)
+			{
+			case SDK::ECrBuildingID::Assembler_Variant:
+			case SDK::ECrBuildingID::Crafter_Variant:
+			case SDK::ECrBuildingID::CrafterTier2_Variant:
+			case SDK::ECrBuildingID::DefenseCannon_Variant:
+			case SDK::ECrBuildingID::Exporter_Variant:
+			case SDK::ECrBuildingID::ExporterTier2_Variant:
+			case SDK::ECrBuildingID::FactoryTier2_Variant:
+			case SDK::ECrBuildingID::FactoryVariant:
+			case SDK::ECrBuildingID::Forge_Variant:
+			case SDK::ECrBuildingID::Furnace_Variant:
+			case SDK::ECrBuildingID::FurnaceTier2_Variant:
+			case SDK::ECrBuildingID::Hammer_variant:
+			case SDK::ECrBuildingID::MilitaryAssembler_Variant:
+			case SDK::ECrBuildingID::MilitaryCrafter_Variant:
+			case SDK::ECrBuildingID::PackageReceiver_Variant:
+			case SDK::ECrBuildingID::PackageSender_Variant:
+			case SDK::ECrBuildingID::Pressurizer_variant:
+			case SDK::ECrBuildingID::Refinery_variant:
+			case SDK::ECrBuildingID::ResourceRedistributor_Variant:
+			case SDK::ECrBuildingID::Smelter_variant:
+			case SDK::ECrBuildingID::SmelterTier2_Variant:
+			case SDK::ECrBuildingID::Storage_Variant:
+			case SDK::ECrBuildingID::StorageDepot_Variant:
+			case SDK::ECrBuildingID::Synthetizer_Variant:
+			case SDK::ECrBuildingID::SynthetizerTier2_Variant:
+			case SDK::ECrBuildingID::TurretTier2_Variant:
+			case SDK::ECrBuildingID::UniversalStorage_Variant:
+				return true;
+			default:
+				return false;
+			}
+		}
+
+		// -------------------------------------------------------------------------
+		// Build Windows Anywhere
+		// A window snaps to a habitat wall slot only when
+		// UCrBuildingStabilitySubsystem::IsSocketFree says nothing is registered on
+		// that socket, and the machine a habitat wall comes with is registered on
+		// its slot. While a window is being placed, a slot whose occupants are all
+		// such machines counts as free. Every other piece, and every other
+		// occupant, still gets the game's answer.
+		//
+		// GetSnappedSocket is IsSocketFree's only caller and the one place that
+		// knows which piece is being placed, so it marks the window for the
+		// IsSocketFree calls it makes.
+		//
+		// The socket map stores each occupant's ID and removal takes out only the
+		// departing ID, so the window and the machine each keep their own entry and
+		// either can be deconstructed first.
+		// -------------------------------------------------------------------------
+
+		using GetSnappedSocketFn = SDK::AActor*(__fastcall*)(void* self, const SDK::UAuActorPlacementData* placementData,
+			void* a3, void* a4, void* a5, void* a6, void* a7, void* a8, float* a9, void* a10);
+		using IsSocketFreeFn = bool(__fastcall*)(SDK::UObject* self, SDK::UObject* building, const SDK::UStaticMeshSocket* socket);
+
+		using WeakObjectPtrAssignFn = void(__fastcall*)(SDK::FWeakObjectPtr* self, void* const* objectPtrAddr);
+		using GetEntityHandleFromActorFn = SDK::FMassEntityHandle*(__fastcall*)(
+			SDK::UMassActorSubsystem* self, SDK::FMassEntityHandle* result, SDK::FWeakObjectPtr actorKey);
+		using ConstructPersistentEntityIdFn = void(__fastcall*)(
+			SDK::FCrMassPersistentEntityID* self, SDK::FMassEntityHandle handle, const SDK::UObject* worldContext);
+		using IsValidEntityHandleFn = bool(__fastcall*)(SDK::FCrMassPersistentEntityID* self, const SDK::UObject* worldContext);
+		using GetActorFromHandleFn = SDK::AActor*(__fastcall*)(
+			SDK::UMassActorSubsystem* self, SDK::FMassEntityHandle handle, int32_t access);
+
+		using CustomConnectionMap = decltype(SDK::FCrBuildingStabilitySubsystemState::CustomConnectionData);
+
+		constexpr uint32_t kNoPersistentId    = 0xFFFFFFFF;
+		constexpr int32_t  kActorOnlyWhenAlive = 0;
+
+		GetSnappedSocketFn            g_originalGetSnappedSocket = nullptr;
+		IsSocketFreeFn                g_originalIsSocketFree     = nullptr;
+		HookHandle                    g_hookGetSnappedSocket     = nullptr;
+		HookHandle                    g_hookIsSocketFree         = nullptr;
+		WeakObjectPtrAssignFn         g_buildActorKey            = nullptr;
+		GetEntityHandleFromActorFn    g_getEntityHandle          = nullptr;
+		ConstructPersistentEntityIdFn g_constructPersistentId    = nullptr;
+		IsValidEntityHandleFn         g_isValidEntityHandle      = nullptr;
+		GetActorFromHandleFn          g_getActorFromHandle       = nullptr;
+		std::atomic<bool>             g_buildWindowsAnywhere{ false };
+
+		thread_local bool t_placingWindow = false;
+
+		bool OccupiedOnlyByHabitatMachines(SDK::UObject* stability, SDK::UObject* building, const SDK::UStaticMeshSocket* socket)
+		{
+			try
+			{
+				if (!socket || !IsHabitat(building))
+					return false;
+
+				SDK::UClass* actorSubsystemClass = SDK::UMassActorSubsystem::StaticClass();
+				SDK::UWorldSubsystem* subsystem = SDK::USubsystemBlueprintLibrary::GetWorldSubsystem(
+					stability, SDK::TSubclassOf<SDK::UWorldSubsystem>(actorSubsystemClass));
+				if (!subsystem || !subsystem->IsA(actorSubsystemClass))
+					return false;
+
+				auto* actorSubsystem = static_cast<SDK::UMassActorSubsystem*>(subsystem);
+				if (!*reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(actorSubsystem) + AOB::kMassActorManagerOffset))
+					return false;
+
+				SDK::FWeakObjectPtr actorKey{};
+				void* actorPtr = building;
+				g_buildActorKey(&actorKey, &actorPtr);
+
+				SDK::FMassEntityHandle handle{};
+				g_getEntityHandle(actorSubsystem, &handle, actorKey);
+				if (handle.Index == 0)
+					return false;
+
+				SDK::FCrMassPersistentEntityID buildingId{};
+				g_constructPersistentId(&buildingId, handle, stability);
+				if (buildingId.ID == kNoPersistentId)
+					return false;
+
+				auto& connections = *reinterpret_cast<CustomConnectionMap*>(
+					reinterpret_cast<uint8_t*>(stability) + AOB::kStabilityCustomConnectionsOffset);
+
+				auto entry = connections.Find(buildingId,
+					[](const SDK::FCrMassPersistentEntityID& a, const SDK::FCrMassPersistentEntityID& b) { return a.ID == b.ID; });
+				if (entry == end(connections))
+					return false;
+
+				int occupants = 0;
+				for (auto& slot : entry->Value().SocketConnections)
+				{
+					if (!(slot.Key() == socket->SocketName))
+						continue;
+
+					for (const SDK::FCrMassPersistentEntityID& occupant : slot.Value().Values)
+					{
+						// IsValidEntityHandle refreshes CachedHandle, so it works on a copy.
+						SDK::FCrMassPersistentEntityID resolved = occupant;
+						if (!g_isValidEntityHandle(&resolved, stability))
+							return false;
+
+						if (!IsHabitatMachine(g_getActorFromHandle(actorSubsystem, resolved.CachedHandle, kActorOnlyWhenAlive)))
+							return false;
+
+						++occupants;
+					}
+				}
+				return occupants > 0;
+			}
+			catch (...)
+			{
+				return false;
+			}
+		}
+
+		SDK::AActor* __fastcall Detour_GetSnappedSocket(void* self, const SDK::UAuActorPlacementData* placementData,
+			void* a3, void* a4, void* a5, void* a6, void* a7, void* a8, float* a9, void* a10)
+		{
+			const bool outer = t_placingWindow;
+			t_placingWindow = g_buildWindowsAnywhere.load() && placementData && IsWindowId(placementData->BuildingID);
+
+			SDK::AActor* result = g_originalGetSnappedSocket(self, placementData, a3, a4, a5, a6, a7, a8, a9, a10);
+
+			t_placingWindow = outer;
+			return result;
+		}
+
+		bool __fastcall Detour_IsSocketFree(SDK::UObject* self, SDK::UObject* building, const SDK::UStaticMeshSocket* socket)
+		{
+			const bool isFree = g_originalIsSocketFree(self, building, socket);
+			if (isFree || !t_placingWindow)
+				return isFree;
+
+			return OccupiedOnlyByHabitatMachines(self, building, socket);
+		}
+
+		// -------------------------------------------------------------------------
+		// Deconstruct Windows During Waves
+		// ACrPlayerControllerBase::FindDeconstructibleTarget refuses any building
+		// whose temperature is above 0, and a wave heats the habitat's windows. When
+		// it finds nothing, it runs once more with that one jump turned into a
+		// no-op, and the answer is kept only if it is a window, so every other
+		// heated building stays protected. The function reads only its inputs and
+		// writes nothing, so running it twice changes nothing else.
+		// -------------------------------------------------------------------------
+
+		using FindDeconstructibleTargetFn = SDK::AActor*(__fastcall*)(SDK::ACrPlayerControllerBase* self, const void* traceData);
+
+		FindDeconstructibleTargetFn g_originalFindDeconstructibleTarget = nullptr;
+		HookHandle                  g_hookFindDeconstructibleTarget     = nullptr;
+		uint8_t*                    g_heatGate                          = nullptr;
+		uint8_t                     g_heatGateBytes[2]                  = {};
+		std::atomic<bool>           g_deconstructWindowsDuringWaves{ false };
+
+		// IPluginMemoryUtils::Patch logs every write, and this flips the jump on
+		// every call, so it writes the two bytes itself.
+		bool WriteHeatGate(const uint8_t (&bytes)[2])
+		{
+			DWORD oldProtect = 0;
+			if (!VirtualProtect(g_heatGate, sizeof(bytes), PAGE_EXECUTE_READWRITE, &oldProtect))
+				return false;
+
+			memcpy(g_heatGate, bytes, sizeof(bytes));
+			VirtualProtect(g_heatGate, sizeof(bytes), oldProtect, &oldProtect);
+			FlushInstructionCache(GetCurrentProcess(), g_heatGate, sizeof(bytes));
+			return true;
+		}
+
+		class HeatGateBypass
+		{
+		public:
+			HeatGateBypass()
+			{
+				static constexpr uint8_t kNops[2] = { 0x90, 0x90 };
+				m_open = WriteHeatGate(kNops);
+			}
+			~HeatGateBypass()
+			{
+				if (m_open)
+					WriteHeatGate(g_heatGateBytes);
+			}
+			HeatGateBypass(const HeatGateBypass&) = delete;
+			HeatGateBypass& operator=(const HeatGateBypass&) = delete;
+
+			explicit operator bool() const { return m_open; }
+
+		private:
+			bool m_open = false;
+		};
+
+		SDK::AActor* __fastcall Detour_FindDeconstructibleTarget(SDK::ACrPlayerControllerBase* self, const void* traceData)
+		{
+			SDK::AActor* target = g_originalFindDeconstructibleTarget(self, traceData);
+			if (target || !g_deconstructWindowsDuringWaves.load())
+				return target;
+
+			{
+				HeatGateBypass bypass;
+				if (!bypass)
+					return nullptr;
+				target = g_originalFindDeconstructibleTarget(self, traceData);
+			}
+
+			try
+			{
+				return IsWindow(target) ? target : nullptr;
+			}
+			catch (...)
+			{
+				return nullptr;
+			}
 		}
 
 		// -------------------------------------------------------------------------
@@ -243,6 +538,54 @@ namespace BetterCheats::Panels::Building
 			else
 				LOG_INFO("Building: CheckStability_DynamicPillar hook installed");
 		}
+
+		// aob_resolver.cpp has already logged the line for a group that missed.
+		if (aob.GetSnappedSocket && aob.FWeakObjectPtr_AssignFObjectPtr && aob.UMassActorSubsystem_GetEntityHandleFromActor)
+		{
+			g_buildActorKey         = reinterpret_cast<WeakObjectPtrAssignFn>(aob.FWeakObjectPtr_AssignFObjectPtr);
+			g_getEntityHandle       = reinterpret_cast<GetEntityHandleFromActorFn>(aob.UMassActorSubsystem_GetEntityHandleFromActor);
+			g_constructPersistentId = reinterpret_cast<ConstructPersistentEntityIdFn>(aob.PersistentEntityID_Construct);
+			g_isValidEntityHandle   = reinterpret_cast<IsValidEntityHandleFn>(aob.PersistentEntityID_IsValidEntityHandle);
+			g_getActorFromHandle    = reinterpret_cast<GetActorFromHandleFn>(aob.MassActorSubsystem_GetActorFromHandle);
+
+			g_hookIsSocketFree = hooks->Install(
+				aob.IsSocketFree,
+				reinterpret_cast<void*>(&Detour_IsSocketFree),
+				reinterpret_cast<void**>(&g_originalIsSocketFree));
+			if (g_hookIsSocketFree)
+			{
+				g_hookGetSnappedSocket = hooks->Install(
+					aob.GetSnappedSocket,
+					reinterpret_cast<void*>(&Detour_GetSnappedSocket),
+					reinterpret_cast<void**>(&g_originalGetSnappedSocket));
+				if (!g_hookGetSnappedSocket)
+				{
+					hooks->Remove(g_hookIsSocketFree);
+					g_hookIsSocketFree     = nullptr;
+					g_originalIsSocketFree = nullptr;
+				}
+			}
+
+			if (g_hookGetSnappedSocket)
+				LOG_INFO("Building: window placement hooks installed");
+			else
+				LOG_WARN("Building: failed to install window placement hooks - Build Windows Anywhere stays off");
+		}
+
+		if (aob.FindDeconstructibleTarget)
+		{
+			g_heatGate = reinterpret_cast<uint8_t*>(aob.FindDeconstructibleTarget_HeatGate);
+			memcpy(g_heatGateBytes, g_heatGate, sizeof(g_heatGateBytes));
+
+			g_hookFindDeconstructibleTarget = hooks->Install(
+				aob.FindDeconstructibleTarget,
+				reinterpret_cast<void*>(&Detour_FindDeconstructibleTarget),
+				reinterpret_cast<void**>(&g_originalFindDeconstructibleTarget));
+			if (!g_hookFindDeconstructibleTarget)
+				LOG_WARN("Building: failed to install FindDeconstructibleTarget hook - Deconstruct Windows During Waves stays off");
+			else
+				LOG_INFO("Building: FindDeconstructibleTarget hook installed");
+		}
 	}
 
 	void Shutdown()
@@ -277,6 +620,25 @@ namespace BetterCheats::Panels::Building
 			g_originalCheckStabilityDynamicPillar = nullptr;
 		}
 		g_noStabilityCheck = false;
+
+		if (hooks && g_hookGetSnappedSocket)
+		{
+			hooks->Remove(g_hookGetSnappedSocket);
+			hooks->Remove(g_hookIsSocketFree);
+			g_hookGetSnappedSocket     = nullptr;
+			g_hookIsSocketFree         = nullptr;
+			g_originalGetSnappedSocket = nullptr;
+			g_originalIsSocketFree     = nullptr;
+		}
+		g_buildWindowsAnywhere = false;
+
+		if (hooks && g_hookFindDeconstructibleTarget)
+		{
+			hooks->Remove(g_hookFindDeconstructibleTarget);
+			g_hookFindDeconstructibleTarget     = nullptr;
+			g_originalFindDeconstructibleTarget = nullptr;
+		}
+		g_deconstructWindowsDuringWaves = false;
 
 		if (g_unlockAllBuildings)
 		{
@@ -343,6 +705,8 @@ namespace BetterCheats::Panels::Building
 		g_noStabilityCheck   = SessionConfig::Get("playerBuilding.noStabilityCheck", false);
 		g_unlockAllBuildings = SessionConfig::Get("playerBuilding.unlockAllBuildings", false);
 		g_unlockAllRecipes   = SessionConfig::Get("playerBuilding.unlockAllRecipes", false);
+		g_buildWindowsAnywhere          = SessionConfig::Get("playerBuilding.buildWindowsAnywhere", false);
+		g_deconstructWindowsDuringWaves = SessionConfig::Get("playerBuilding.deconstructWindowsDuringWaves", false);
 
 		LOG_INFO("Building: applied saved config for session '%s'.", SessionConfig::GetSessionName().c_str());
 	}
@@ -356,7 +720,7 @@ namespace BetterCheats::Panels::Building
 		// same "above every control" position every group uses.
 		{
 			static BetterCheats::UI::SavedPresetRowState s_presetRow;
-			constexpr int kFieldCount = 4;
+			constexpr int kFieldCount = 6;
 			BetterCheats::PresetStore::Field fields[kFieldCount];
 
 			auto getLive = [](BetterCheats::PresetStore::Field* out)
@@ -365,6 +729,8 @@ namespace BetterCheats::Panels::Building
 				out[1] = { "noStabilityCheck",    g_noStabilityCheck    ? 1.0f : 0.0f };
 				out[2] = { "unlockAllBuildings",  g_unlockAllBuildings  ? 1.0f : 0.0f };
 				out[3] = { "unlockAllRecipes",    g_unlockAllRecipes    ? 1.0f : 0.0f };
+				out[4] = { "buildWindowsAnywhere",          g_buildWindowsAnywhere.load()          ? 1.0f : 0.0f };
+				out[5] = { "deconstructWindowsDuringWaves", g_deconstructWindowsDuringWaves.load() ? 1.0f : 0.0f };
 			};
 			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
 			{
@@ -372,6 +738,18 @@ namespace BetterCheats::Panels::Building
 				if (count > 1) { g_noStabilityCheck   = f[1].value != 0.0f; SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck); }
 				if (count > 2) { g_unlockAllBuildings = f[2].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllBuildings", g_unlockAllBuildings); }
 				if (count > 3) { g_unlockAllRecipes   = f[3].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllRecipes", g_unlockAllRecipes); }
+				if (count > 4)
+				{
+					const bool v = f[4].value != 0.0f;
+					g_buildWindowsAnywhere = v;
+					SessionConfig::Set("playerBuilding.buildWindowsAnywhere", v);
+				}
+				if (count > 5)
+				{
+					const bool v = f[5].value != 0.0f;
+					g_deconstructWindowsDuringWaves = v;
+					SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", v);
+				}
 			};
 			auto isBuiltin      = [](const char*) { return false; };
 			auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
@@ -401,6 +779,30 @@ namespace BetterCheats::Panels::Building
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##no_stability_check", &g_noStabilityCheck))
 				SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck);
+
+			imgui->TableNextRow(0, 0.0f);
+			imgui->TableSetColumnIndex(0);
+			imgui->Text("Build Windows Anywhere");
+			imgui->TableSetColumnIndex(1);
+			bool buildWindowsAnywhere = g_buildWindowsAnywhere.load();
+			if (imgui->Checkbox("##build_windows_anywhere", &buildWindowsAnywhere))
+			{
+				g_buildWindowsAnywhere = buildWindowsAnywhere;
+				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", buildWindowsAnywhere);
+			}
+			imgui->SetItemTooltip("Lets a habitat window share a wall slot with the machine built into that wall.");
+
+			imgui->TableNextRow(0, 0.0f);
+			imgui->TableSetColumnIndex(0);
+			imgui->Text("Deconstruct Windows During Waves");
+			imgui->TableSetColumnIndex(1);
+			bool deconstructWindows = g_deconstructWindowsDuringWaves.load();
+			if (imgui->Checkbox("##deconstruct_windows_waves", &deconstructWindows))
+			{
+				g_deconstructWindowsDuringWaves = deconstructWindows;
+				SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", deconstructWindows);
+			}
+			imgui->SetItemTooltip("Lets habitat windows be deconstructed while a wave has heated them. Other heated buildings stay protected.");
 
 			imgui->EndTable();
 		}
