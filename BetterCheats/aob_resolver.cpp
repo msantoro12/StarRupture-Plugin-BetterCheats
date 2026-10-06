@@ -136,8 +136,8 @@ namespace BetterCheats::AOB
 		ResolveFunction(self, scanner, g_resolved.HealthHud_SetupProgressBar,
 			"UCrUW_HealthHud::SetupProgressBar", HealthHud_SetupProgressBar);
 
-		ResolveFunction(self, scanner, g_resolved.GetResourceConditionResult,
-			"UCrBuildingComponent::GetResourceConditionResult", GetResourceConditionResult);
+		ResolveFunction(self, scanner, g_resolved.GetPlacementResourceConditionResult,
+			"UCrBuildingComponent::GetPlacementResourceConditionResult", GetPlacementResourceConditionResult);
 		ResolveFunction(self, scanner, g_resolved.CheckAvailableBuildings,
 			"ACrTechnologyKeeper::CheckAvailableBuildings", CheckAvailableBuildings);
 		ResolveFunction(self, scanner, g_resolved.IsRecipeUnlocked,
@@ -156,6 +156,8 @@ namespace BetterCheats::AOB
 
 		ResolveFunction(self, scanner, g_resolved.AddNewItem,
 			"UAuItemsComponent::AddNewItem", AddNewItem);
+		ResolveFunction(self, scanner, g_resolved.InventoryContainer_InitInventorySlots,
+			"UCrUW_InventoryContainer::InitInventorySlots", InventoryContainer_InitInventorySlots);
 
 		ResolveFunction(self, scanner, g_resolved.FMassEntityConfig_DestroyEntityTemplate,
 			"FMassEntityConfig::DestroyEntityTemplate", FMassEntityConfig_DestroyEntityTemplate);

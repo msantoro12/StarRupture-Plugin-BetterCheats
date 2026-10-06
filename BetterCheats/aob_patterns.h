@@ -65,11 +65,12 @@ namespace BetterCheats::AOB
 	// Building
 	// -------------------------------------------------------------------------
 
-	// Class::Function  UCrBuildingComponent::GetResourceConditionResult
+	// Class::Function  UCrBuildingComponent::GetPlacementResourceConditionResult
 	// Parameters       (UCrBuildingComponent* this) -> EAuAPlacementConditionResult
 	// Hooked to return Valid (1) when no-build-cost cheat is active.
-	constexpr const char* GetResourceConditionResult =
-		"48 8B C4 53 57 48 83 EC ?? 48 89 68 ?? 48 8B D9 48 8B 89";
+	// Formerly GetResourceConditionResult — renamed by the game, same contract.
+	constexpr const char* GetPlacementResourceConditionResult =
+		"48 89 5C 24 ?? 48 89 6C 24 ?? 56 57 41 56 48 83 EC ?? 48 8B F9 48 8B 89";
 
 	// Class::Function  UAuActorPlacementComponent::AddPoint
 	// Parameters       (UAuActorPlacementComponent* this) -> FScriptContainerElement*
@@ -270,6 +271,17 @@ namespace BetterCheats::AOB
 	// (e.g. not enough inventory space, or not authority).
 	constexpr const char* AddNewItem =
 		"44 89 4C 24 ?? 4C 89 44 24 ?? 53 56 57 41 55 41 56 48 81 EC ?? ?? ?? ??";
+
+	// Class::Function  UCrUW_InventoryContainer::InitInventorySlots
+	// Parameters       (UCrUW_InventoryContainer* this)
+	// Builds the slot widgets for a container bound to a player inventory. The
+	// only two callers are InitPlayer (UCrUW_Inventory::InitOnShow, which every
+	// machine screen opens as well as the inventory itself) and
+	// HandleOnInventorySizeChanged, so it runs each time the grid is drawn or
+	// rebuilt. Ends on `lea r12, [rcx+468h]` -- the container's private
+	// TWeakObjectPtr<UCrInventoryComponent>.
+	constexpr const char* InventoryContainer_InitInventorySlots =
+		"48 89 5C 24 ?? 48 89 6C 24 ?? 56 57 41 54 41 56 41 57 48 83 EC 70 4C 8D A1";
 
 	// Class::Function  UE::StructUtils::GetStructInstanceCrc32
 	// Parameters       (const UScriptStruct* ScriptStruct, const uint8* StructMemory, uint32 CRC) -> uint32
