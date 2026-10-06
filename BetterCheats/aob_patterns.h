@@ -176,15 +176,6 @@ namespace BetterCheats::AOB
 		"40 55 53 56 57 41 55 48 8D AC 24 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 48 83 B9 ?? ?? ?? ?? 00 "
 		"4C 8B E9 48 8B 01 0F 84 ?? ?? ?? ?? 33 FF 48 89 7D ?? 48 89 7D ??";
 
-	// Class::Function  ACrAPHelperActorCustom::GetCollisionConditionResult
-	// Parameters       (ACrAPHelperActorCustom* this, const UCrBuildingData* PlacementData) -> EAuAPlacementConditionResult
-	// Calls CheckMainMeshCollision, then the terrain check, then, when the data
-	// asks for it, a sweep along the mesh bounds whose first unsnapped building
-	// is BuildingColliding too.
-	constexpr const char* GetCollisionConditionResult_Custom =
-		"40 55 56 57 48 8D AC 24 ?? ?? ?? ?? 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 "
-		"48 89 85 ?? ?? ?? ?? 48 83 B9 ?? ?? ?? ?? 00 48 8B F2 48 8B F9";
-
 	// Class::Function  ACrAPHelper::GetBoxCollisionResult
 	// Parameters       (ACrAPHelper* this, const FVector& Min, const FVector& Max,
 	//                   const TArray<AActor*>& IgnoredActors, const TArray<TSubclassOf<ACrBuildingActorBase>>& IgnoredClasses,
