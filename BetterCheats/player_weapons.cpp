@@ -299,13 +299,18 @@ namespace BetterCheats::Panels::Weapons
 		// within the tick that read it. The raw reads of the spec go through
 		// SEH-guarded POD copies, because the layout is unverified until a throw.
 		// ---------------------------------------------------------------------
-		constexpr float kThrowProbeWindowSeconds = 12.0f;  // fuse is 4 s; room for three kCdoRetryInterval scans
+		constexpr float kThrowProbeWindowSeconds = 12.0f;  // fuse is 4 s, plus margin
+		// The projectile is gone about 4.5 s after the throw, so the 5 s CdoRetryDue
+		// gate would miss it. Scans run only while armed and stop once one is held.
+		constexpr float kThrowProbeScanInterval  = 0.5f;
+		constexpr int   kThrowProbeMaxScans      = 24;     // per window
 		constexpr int   kThrowProbeMaxMisses     = 3;      // stop looking if no projectile ever shows up
 
 		float                     g_throwProbeLastCharge   = -1.0f;
 		float                     g_throwProbeLastMax      = -1.0f;
 		float                     g_throwProbeWindow       = 0.0f;   // > 0 while armed
 		float                     g_throwProbeScanCooldown = 0.0f;
+		int                       g_throwProbeScans        = 0;      // walks this window
 		int                       g_throwProbeMisses       = 0;
 		bool                      g_throwProbeDone         = false;
 		bool                      g_throwProbeSeen         = false;  // a projectile was found this arming
@@ -582,6 +587,7 @@ namespace BetterCheats::Panels::Weapons
 
 				g_throwProbeWindow       = kThrowProbeWindowSeconds;
 				g_throwProbeScanCooldown = 0.0f;
+				g_throwProbeScans        = 0;
 				LOG_INFO("GrenadeDamageProbe: charge dropped %.2f -> %.2f, watching for the thrown projectile.",
 					previousCharge, charge);
 			}
@@ -612,8 +618,12 @@ namespace BetterCheats::Panels::Weapons
 				// resolved by the grenade globals block below.
 				SDK::UObject* projectileCdo = g_grenadeGlobalHandle[kGrenadeFuse].object.Get();
 
-				if (!projectile && CdoRetryDue(g_throwProbeScanCooldown, deltaSeconds))
+				if (!projectile)
+					g_throwProbeScanCooldown -= deltaSeconds;
+				if (!projectile && g_throwProbeScanCooldown <= 0.0f && g_throwProbeScans < kThrowProbeMaxScans)
 				{
+					g_throwProbeScanCooldown = kThrowProbeScanInterval;
+					++g_throwProbeScans;
 					int total = 0;
 					projectile = FindNewestProjectile(projectileCdo ? projectileCdo->Class : nullptr, total);
 					if (projectile)
