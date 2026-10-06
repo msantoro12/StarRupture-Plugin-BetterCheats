@@ -672,6 +672,196 @@ namespace BetterCheats::Panels::Weapons
 			}
 		}
 
+		// ---------------------------------------------------------------------
+		// Throw-time probe: the config-time dumps above found no damage number on
+		// the grenade's GameplayEffects, so the input has to be on the runtime
+		// spec the projectile builds. After a throw (CurrentGrenadeCharge drops)
+		// this looks for the first live BP_GrenadeProjectile_C, watches its
+		// DamageGESpec until the spec exists, and logs what the spec carries --
+		// including its SetByCaller maps, which the loader's property API cannot
+		// reach, so those come from the engine struct layout (see LogGrenadeSpec).
+		// Log-only, one shot per session, game thread (Tick) only. The projectile
+		// is held as an ObjectRef between ticks and every spec pointer is used
+		// within the tick that read it.
+		// ---------------------------------------------------------------------
+		constexpr float kThrowProbeWindowSeconds = 8.0f;   // fuse is 4 s, plus margin
+		constexpr float kThrowProbeScanInterval  = 0.25f;
+		constexpr int   kThrowProbeMaxMisses     = 3;      // stop looking if no projectile ever shows up
+
+		float                     g_throwProbeLastCharge = -1.0f;
+		float                     g_throwProbeWindow     = 0.0f;   // > 0 while armed
+		float                     g_throwProbeScanCooldown = 0.0f;
+		int                       g_throwProbeMisses     = 0;
+		bool                      g_throwProbeDone       = false;
+		bool                      g_throwProbeSeen       = false;  // a projectile was found this arming
+		ObjectRef<SDK::UObject>   g_throwProbeProjectile;
+
+		void EndThrowProbe(bool projectileSeen)
+		{
+			g_throwProbeWindow = 0.0f;
+			g_throwProbeSeen   = false;
+			g_throwProbeProjectile.Reset();
+			if (projectileSeen)
+				g_throwProbeDone = true;
+			else
+				++g_throwProbeMisses;
+		}
+
+		// FGameplayTag is a single FName, so the name-keyed and tag-keyed
+		// SetByCaller maps share one layout.
+		using SetByCallerMap = UC::TMap<SDK::FName, float>;
+
+		void LogSetByCallerMap(const char* label, SetByCallerMap& map)
+		{
+			const int num = map.Num();
+			if (num < 0 || num > 32 || map.NumAllocated() > 64)
+			{
+				LOG_INFO("GrenadeDamageProbe:     %s: implausible (num=%d allocated=%d) -- layout assumption failed.",
+					label, num, map.NumAllocated());
+				return;
+			}
+
+			LOG_INFO("GrenadeDamageProbe:     %s: %d entr%s", label, num, num == 1 ? "y" : "ies");
+			for (int i = 0; i < map.NumAllocated(); ++i)
+			{
+				if (!map.IsValidIndex(i)) continue;
+				std::string key = "<unreadable>";
+				try { key = map[i].Key().ToString(); } catch (...) {}
+				LOG_INFO("GrenadeDamageProbe:       '%s' = %.4f", key.c_str(), map[i].Value());
+			}
+		}
+
+		void LogGrenadeSpec(const char* label, SDK::FGameplayEffectSpec* spec)
+		{
+			std::string def = "<null>";
+			if (spec->Def)
+			{
+				def = "<unreadable>";
+				try { def = spec->Def->GetName(); } catch (...) {}
+			}
+
+			LOG_INFO("GrenadeDamageProbe:   %s: spec=%p def='%s' level=%.4f stackCount=%d modifiers=%d modifiedAttributes=%d",
+				label, static_cast<void*>(spec), def.c_str(), spec->Level, spec->StackCount,
+				spec->Modifiers.Num(), spec->ModifiedAttributes.Num());
+
+			// Pad_1D8 is Dumper-7's gap for the two SetByCaller TMaps (name-keyed,
+			// then tag-keyed), 0x50 each. The static_asserts are the layout claim.
+			static_assert(sizeof(SetByCallerMap) == 0x50, "TMap layout");
+			static_assert(sizeof(spec->Pad_1D8) == 2 * sizeof(SetByCallerMap), "two TMaps fill the gap");
+
+			auto* maps = reinterpret_cast<SetByCallerMap*>(spec->Pad_1D8);
+			LogSetByCallerMap("SetByCaller map A", maps[0]);
+			LogSetByCallerMap("SetByCaller map B", maps[1]);
+		}
+
+		// Pointer to a named property's storage on `object`, or null.
+		void* NamedPropertyPtr(IPluginObjectProperties* props, void* object, const char* propertyName)
+		{
+			PluginPropertyHandle property = props->FindPropertyOnObject(object, propertyName);
+			return property ? props->GetPropertyRawPtr(object, property) : nullptr;
+		}
+
+		// FGameplayEffectSpecHandle is a TSharedPtr<FGameplayEffectSpec>: the first
+		// pointer is the spec, null until the projectile has built it.
+		SDK::FGameplayEffectSpec* ReadSpecHandle(IPluginObjectProperties* props, void* object, const char* propertyName)
+		{
+			void* handle = NamedPropertyPtr(props, object, propertyName);
+			return handle ? *static_cast<SDK::FGameplayEffectSpec* const*>(handle) : nullptr;
+		}
+
+		// currentCharge is CurrentGrenadeCharge as read this tick. Call once per
+		// tick, before anything tops it back up.
+		void ProbeGrenadeThrow(float currentCharge, float deltaSeconds)
+		{
+			if (g_throwProbeDone || g_throwProbeMisses >= kThrowProbeMaxMisses)
+				return;
+
+			if (g_throwProbeWindow <= 0.0f && g_throwProbeLastCharge >= 0.0f && currentCharge < g_throwProbeLastCharge - 0.01f)
+			{
+				g_throwProbeWindow       = kThrowProbeWindowSeconds;
+				g_throwProbeScanCooldown = 0.0f;
+				LOG_INFO("GrenadeDamageProbe: charge dropped %.2f -> %.2f, watching for the thrown projectile.",
+					g_throwProbeLastCharge, currentCharge);
+			}
+			g_throwProbeLastCharge = currentCharge;
+
+			if (g_throwProbeWindow <= 0.0f)
+				return;
+
+			g_throwProbeWindow -= deltaSeconds;
+
+			IPluginHooks* hooks = GetHooks();
+			IPluginObjectWalker*     walker = hooks ? hooks->ObjectWalker     : nullptr;
+			IPluginObjectProperties* props  = hooks ? hooks->ObjectProperties : nullptr;
+			if (!walker || !props || !walker->IsReady() || !props->IsReady())
+			{
+				if (g_throwProbeWindow <= 0.0f)
+					EndThrowProbe(false);
+				return;
+			}
+
+			try
+			{
+				SDK::UObject* projectile = g_throwProbeProjectile.Get();
+
+				if (!projectile && g_throwProbeSeen)
+				{
+					LOG_INFO("GrenadeDamageProbe: projectile was destroyed before its DamageGESpec was built.");
+					EndThrowProbe(true);
+					return;
+				}
+
+				g_throwProbeScanCooldown -= deltaSeconds;
+				if (!projectile && g_throwProbeScanCooldown <= 0.0f)
+				{
+					g_throwProbeScanCooldown = kThrowProbeScanInterval;
+
+					PluginObjectInfo found[4];
+					if (walker->FindObjectsByClassNameInto("BP_GrenadeProjectile_C", PluginObjectLookup_InstanceOnly, found, 4) > 0)
+					{
+						projectile = static_cast<SDK::UObject*>(found[0].object);
+						g_throwProbeProjectile.Set(projectile);
+						g_throwProbeSeen = true;
+
+						LOG_INFO("GrenadeDamageProbe: found projectile '%s'.", found[0].objectName);
+						if (void* list = NamedPropertyPtr(props, projectile, "MultiDamageClassList"))
+							LOG_INFO("GrenadeDamageProbe:   MultiDamageClassList.Num() = %d",
+								static_cast<UC::TArray<SDK::UClass*>*>(list)->Num());
+					}
+				}
+
+				if (projectile)
+				{
+					SDK::FGameplayEffectSpec* damage   = ReadSpecHandle(props, projectile, "DamageGESpec");
+					SDK::FGameplayEffectSpec* friendly = ReadSpecHandle(props, projectile, "FriendlyDamageGESpec");
+					if (damage || friendly)
+					{
+						LOG_INFO("GrenadeDamageProbe: projectile spec(s) built (%.1f s left of the window):", g_throwProbeWindow);
+						if (damage)   LogGrenadeSpec("DamageGESpec", damage);
+						else          LOG_INFO("GrenadeDamageProbe:   DamageGESpec.Data is null");
+						if (friendly) LogGrenadeSpec("FriendlyDamageGESpec", friendly);
+						else          LOG_INFO("GrenadeDamageProbe:   FriendlyDamageGESpec.Data is null");
+						EndThrowProbe(true);
+						return;
+					}
+				}
+
+				if (g_throwProbeWindow <= 0.0f)
+				{
+					if (g_throwProbeSeen)
+						LOG_INFO("GrenadeDamageProbe: projectile found but DamageGESpec.Data stayed null for the whole window.");
+					else
+						LOG_INFO("GrenadeDamageProbe: no BP_GrenadeProjectile_C instance found within the window.");
+					EndThrowProbe(g_throwProbeSeen);
+				}
+			}
+			catch (...)
+			{
+				LOG_WARN("GrenadeDamageProbe: exception during the throw-time probe.");
+				EndThrowProbe(true);
+			}
+		}
+
 		// Profiles are DISCOVERED, not hardcoded. Weapon data assets live in the paks
 		// (no I_*DataItem_C classes exist in the SDK dump), so the only truthful source
 		// of the roster is what the player actually equips.
@@ -971,6 +1161,20 @@ namespace BetterCheats::Panels::Weapons
 		BetterCheats::ComposedAttribute    g_composedGrenadeCost;
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeCostOwner;
 
+		// Grenade damage-source test (see the GrenadeDamageProbe log lines): scales
+		// BaseDamage.Value on the equipped grenade's data asset so a throw at 1x vs
+		// the scaled value shows whether the explosion reads it. Set through the
+		// bc_grenadedmg console command, applied on the tick. 1 = no change.
+		std::atomic<float> g_grenadeBaseDamageScale{1.0f};
+		float              g_grenadeBaseDamageScaleLogged = 1.0f;
+		BetterCheats::ComposedAttribute g_composedGrenadeBaseDamage;
+		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeBaseDamageOwner;
+		constexpr float kGrenadeBaseDamageScaleMax = 100.0f;
+		constexpr float kGrenadeBaseDamageFinalMax = 1000000.0f;
+		constexpr const char* kGrenadeBaseDamageKey = "playerWeapons.compose.grenadeBaseDamage";
+		constexpr const char* kGrenadeBaseDamageCommand = "bc_grenadedmg";
+		bool g_grenadeBaseDamageCommandRegistered = false;
+
 		// Max/Min Charge: GAS attributes on character->GrenadeChargeAttributes, ONE
 		// shared instance regardless of grenade type -- same "shared instance,
 		// respawn-only Forget" shape as g_composed[]/g_composedOwner above, not the
@@ -999,6 +1203,9 @@ namespace BetterCheats::Panels::Weapons
 			g_composedGrenadeCost.Forget();
 			g_grenadeCostOwner.Reset();
 
+			g_composedGrenadeBaseDamage.Forget();
+			g_grenadeBaseDamageOwner.Reset();
+
 			g_composedGrenade[0].Forget();
 			g_composedGrenade[1].Forget();
 			g_grenadeAttrOwner = nullptr;
@@ -1013,20 +1220,29 @@ namespace BetterCheats::Panels::Weapons
 		//
 		// The previous owner is held across ticks and can be unloaded in the
 		// meantime, so it's an ObjectRef: gone means nothing to hand back.
-		void ReleaseMagazineIfOwnerChanged(SDK::UCrWeaponItemDataBase* current)
+		template <class Owner, class ValueOf>
+		void ReleaseComposedIfOwnerChanged(BetterCheats::ComposedAttribute& composed, ObjectRef<Owner>& ownerRef,
+			Owner* current, ValueOf valueOf, const char* key)
 		{
-			SDK::UCrWeaponItemDataBase* previous = g_magazineOwner.Get();
+			Owner* previous = ownerRef.Get();
 			if (current == previous) return;
 			if (previous)
 			{
-				g_composedMagazine.Release(previous, previous->BaseMagazine.Value);
-				BetterCheats::ClearComposeState("playerWeapons.compose.magazine");
+				composed.Release(previous, valueOf(previous));
+				BetterCheats::ClearComposeState(key);
 			}
 			else
 			{
-				g_composedMagazine.Forget();
+				composed.Forget();
 			}
-			g_magazineOwner.Set(current);
+			ownerRef.Set(current);
+		}
+
+		void ReleaseMagazineIfOwnerChanged(SDK::UCrWeaponItemDataBase* current)
+		{
+			ReleaseComposedIfOwnerChanged(g_composedMagazine, g_magazineOwner, current,
+				[](SDK::UCrWeaponItemDataBase* owner) -> float& { return owner->BaseMagazine.Value; },
+				"playerWeapons.compose.magazine");
 		}
 
 		// Same reasoning as ReleaseMagazineIfOwnerChanged: Charge Cost lives on the
@@ -1035,18 +1251,44 @@ namespace BetterCheats::Panels::Weapons
 		// one being left before adopting the next.
 		void ReleaseGrenadeCostIfOwnerChanged(SDK::UCrGrenadeWeaponItemDataBase* current)
 		{
-			SDK::UCrGrenadeWeaponItemDataBase* previous = g_grenadeCostOwner.Get();
-			if (current == previous) return;
-			if (previous)
+			ReleaseComposedIfOwnerChanged(g_composedGrenadeCost, g_grenadeCostOwner, current,
+				[](SDK::UCrGrenadeWeaponItemDataBase* owner) -> float& { return owner->GrenadeThrowCostOfGrenadeCharge; },
+				"playerWeapons.compose.grenadeCost");
+		}
+
+		// Same per-grenade-TYPE shape for the damage-source test above.
+		void ReleaseGrenadeBaseDamageIfOwnerChanged(SDK::UCrGrenadeWeaponItemDataBase* current)
+		{
+			ReleaseComposedIfOwnerChanged(g_composedGrenadeBaseDamage, g_grenadeBaseDamageOwner, current,
+				[](SDK::UCrGrenadeWeaponItemDataBase* owner) -> float& { return owner->BaseDamage.Value; },
+				kGrenadeBaseDamageKey);
+		}
+
+		// "bc_grenadedmg [scale]" -- no argument prints the current scale. gameThread
+		// = true, so this runs on the tick; it only stores the atomic the tick reads.
+		void HandleGrenadeBaseDamage(const char* const* argv, int argc, PluginConsoleSink sink, void* userData)
+		{
+			IPluginSelf* self = static_cast<IPluginSelf*>(userData);
+			if (!self || !self->hooks || !self->hooks->Console) return;
+
+			IPluginConsole* console = self->hooks->Console;
+
+			if (argc >= 2)
 			{
-				g_composedGrenadeCost.Release(previous, previous->GrenadeThrowCostOfGrenadeCharge);
-				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeCost");
+				char* end = nullptr;
+				const float requested = strtof(argv[1], &end);
+				if (end == argv[1] || *end != '\0' || !(requested >= 0.0f) || requested > kGrenadeBaseDamageScaleMax)
+				{
+					console->Printf(sink, PluginConsoleLineKind::Error,
+						"Scale must be a number from 0 to %.0f.", kGrenadeBaseDamageScaleMax);
+					return;
+				}
+				g_grenadeBaseDamageScale.store(requested);
 			}
-			else
-			{
-				g_composedGrenadeCost.Forget();
-			}
-			g_grenadeCostOwner.Set(current);
+
+			console->Printf(sink, PluginConsoleLineKind::Output,
+				"Grenade BaseDamage scale: x%.2f (1 = untouched). Equip a grenade for it to apply.",
+				g_grenadeBaseDamageScale.load());
 		}
 
 		// Max/Min Charge share ONE instance across every grenade type (like
@@ -1259,6 +1501,8 @@ namespace BetterCheats::Panels::Weapons
 			profile.baseAdsSpeed        = cdo->AimCameraSpeed.Value;
 			profile.baseResolved        = true;
 			LOG_INFO("Weapons: resolved base stats for '%s' (tab '%s').", profile.raw.c_str(), profile.display.c_str());
+			if (profile.isGrenade)
+				LOG_INFO("GrenadeDamageProbe: '%s' BaseDamage.Value = %.4f", profile.raw.c_str(), profile.baseDamage);
 		}
 
 		// Whether row `a` has a single real stat this plugin can convert its
@@ -1532,9 +1776,25 @@ namespace BetterCheats::Panels::Weapons
 					? static_cast<SDK::UCrGrenadeWeaponItemDataBase*>(equippedData)
 					: nullptr;
 			ReleaseGrenadeCostIfOwnerChanged(grenadeData);
+			ReleaseGrenadeBaseDamageIfOwnerChanged(grenadeData);
 
 			if (grenadeData)
 			{
+				const float damageScale = g_grenadeBaseDamageScale.load();
+				const ComposeStep damageStep = ApplyComposedRow(g_composedGrenadeBaseDamage, grenadeData,
+					grenadeData->BaseDamage.Value, kGrenadeBaseDamageKey,
+					BetterCheats::DiffersFromDefault(damageScale, 1.0f), damageScale,
+					BetterCheats::ComposedAttribute::Mode::Multiply, 0.0f, kGrenadeBaseDamageFinalMax);
+
+				if (damageScale != g_grenadeBaseDamageScaleLogged)
+				{
+					g_grenadeBaseDamageScaleLogged = damageScale;
+					std::string dataName = "<unreadable>";
+					try { dataName = grenadeData->GetName(); } catch (...) {}
+					LOG_INFO("GrenadeDamageProbe: '%s' BaseDamage.Value game=%.4f expected=%.4f live=%.4f (scale x%.2f)",
+						dataName.c_str(), damageStep.game, damageStep.expected, grenadeData->BaseDamage.Value, damageScale);
+				}
+
 				const bool active = BetterCheats::DiffersFromDefault(
 					profile.grenadeValues[kGrenadeCost], kGrenadeRows[kGrenadeCost].defaultValue);
 				const ComposeStep step = ApplyComposedRow(g_composedGrenadeCost, grenadeData,
@@ -1567,6 +1827,8 @@ namespace BetterCheats::Panels::Weapons
 					g_dbgGrenadeExpected[g].store(step.expected);
 					g_dbgGrenadeUnmod[g].store(active ? composed.GetGame() : step.game);
 				}
+
+				ProbeGrenadeThrow(grenadeAttrs->CurrentGrenadeCharge.CurrentValue, deltaSeconds);
 
 				// Infinite Charges: tops CurrentGrenadeCharge up to Max when it
 				// drops, exactly like Infinite magazine tops SetEquippedWeaponCurrentAmmo
@@ -1650,8 +1912,35 @@ namespace BetterCheats::Panels::Weapons
 		catch (...) {}
 	}
 
+	void Initialize()
+	{
+		IPluginSelf* self = GetSelf();
+		if (!self || !self->hooks || !self->hooks->Console)
+		{
+			LOG_WARN("Weapons: console unavailable, '%s' not registered.", kGrenadeBaseDamageCommand);
+			return;
+		}
+
+		PluginConsoleCommandDesc desc{};
+		desc.name       = kGrenadeBaseDamageCommand;
+		desc.usage      = "bc_grenadedmg [scale]";
+		desc.help       = "Scale the equipped grenade's BaseDamage to test whether its explosion reads it (1 = off).";
+		desc.handler    = &HandleGrenadeBaseDamage;
+		desc.userData   = self;
+		desc.gameThread = true;
+
+		g_grenadeBaseDamageCommandRegistered = self->hooks->Console->RegisterCommand(self, &desc);
+		if (!g_grenadeBaseDamageCommandRegistered)
+			LOG_WARN("Weapons: console command '%s' is already taken.", kGrenadeBaseDamageCommand);
+	}
+
 	void Shutdown()
 	{
+		IPluginSelf* self = GetSelf();
+		if (g_grenadeBaseDamageCommandRegistered && self && self->hooks && self->hooks->Console)
+			self->hooks->Console->UnregisterCommand(self, kGrenadeBaseDamageCommand);
+		g_grenadeBaseDamageCommandRegistered = false;
+
 		// The loader's own RELOAD button runs PluginShutdown from its D3D Present
 		// hook, not the game thread Tick() recorded -- GetLocalCharacter() and
 		// every UObject touch below intermittently crash there (see player_lookup.h).
@@ -1663,6 +1952,7 @@ namespace BetterCheats::Panels::Weapons
 				g_composed[a].Forget();
 			g_composedMagazine.Forget();
 			g_composedGrenadeCost.Forget();
+			g_composedGrenadeBaseDamage.Forget();
 			g_composedGrenade[0].Forget();
 			g_composedGrenade[1].Forget();
 			for (int g = 0; g < kGrenadeGlobalCount; ++g)
@@ -1713,6 +2003,16 @@ namespace BetterCheats::Panels::Weapons
 			else
 			{
 				g_composedGrenadeCost.Forget();
+			}
+
+			if (SDK::UCrGrenadeWeaponItemDataBase* owner = g_grenadeBaseDamageOwner.Get())
+			{
+				g_composedGrenadeBaseDamage.Release(owner, owner->BaseDamage.Value);
+				BetterCheats::ClearComposeState(kGrenadeBaseDamageKey);
+			}
+			else
+			{
+				g_composedGrenadeBaseDamage.Forget();
 			}
 
 			if (grenadeAttrs && grenadeAttrs == g_grenadeAttrOwner)
