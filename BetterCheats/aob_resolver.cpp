@@ -58,6 +58,14 @@ namespace BetterCheats::AOB
 			return scanner->FindAllPatternsInMainModule(self, pattern, hits, 2) == 1 ? hits[0] : 0;
 		}
 
+		// A function pattern from the raw scan: it must match exactly once, at a
+		// function entry, the two verdicts Resolve applies. 0 otherwise.
+		uintptr_t FindFunction(IPluginSelf* self, IPluginHookScanner* scanner, const char* pattern)
+		{
+			const uintptr_t addr = FindUnique(self, scanner, pattern);
+			return addr && OwningFunctionStart(addr) == addr ? addr : 0;
+		}
+
 		// Deconstruct Windows During Waves is opt-in, so its patterns go through
 		// the raw scan, which records nothing with the loader: after a game update
 		// a miss turns that one toggle off instead of refusing the plugin. The same
@@ -68,11 +76,10 @@ namespace BetterCheats::AOB
 		// return-null path.
 		void ResolveDeconstructWindows(IPluginSelf* self, IPluginHookScanner* scanner)
 		{
-			const uintptr_t function = FindUnique(self, scanner, FindDeconstructibleTarget);
+			const uintptr_t function = FindFunction(self, scanner, FindDeconstructibleTarget);
 			const uintptr_t match    = FindUnique(self, scanner, FindDeconstructibleTarget_HeatGate);
 
-			bool ok = function && OwningFunctionStart(function) == function
-			       && match && OwningFunctionStart(match) == function;
+			bool ok = function && match && OwningFunctionStart(match) == function;
 			if (ok)
 			{
 				const auto* code = reinterpret_cast<const uint8_t*>(match);
@@ -89,6 +96,22 @@ namespace BetterCheats::AOB
 			}
 			g_resolved.FindDeconstructibleTarget          = function;
 			g_resolved.FindDeconstructibleTarget_HeatGate = match + kHeatGateJumpOffset;
+		}
+
+		// Build Windows Anywhere is opt-in too, and its two hooks only make sense
+		// together, so they resolve as a pair or not at all.
+		void ResolveBuildWindowsAnywhere(IPluginSelf* self, IPluginHookScanner* scanner)
+		{
+			const uintptr_t mainMesh = FindFunction(self, scanner, CheckMainMeshCollision_Custom);
+			const uintptr_t box      = FindFunction(self, scanner, GetBoxCollisionResult);
+			if (!mainMesh || !box)
+			{
+				LOG_WARN("AOB: ACrAPHelperActorCustom::CheckMainMeshCollision or ACrAPHelper::GetBoxCollisionResult "
+					"did not resolve - Build Windows Anywhere stays off.");
+				return;
+			}
+			g_resolved.CheckMainMeshCollision_Custom = mainMesh;
+			g_resolved.GetBoxCollisionResult         = box;
 		}
 
 #if BETTERCHEATS_DEV_BUILD
@@ -148,6 +171,7 @@ namespace BetterCheats::AOB
 			"ACrAPHelperDynamicPillar::CheckStability", CheckStability_DynamicPillar);
 
 		ResolveDeconstructWindows(self, scanner);
+		ResolveBuildWindowsAnywhere(self, scanner);
 
 		ResolveFunction(self, scanner, g_resolved.GetMiningDamage,
 			"UCrMiningToolComponent::GetMiningDamage", GetMiningDamage);

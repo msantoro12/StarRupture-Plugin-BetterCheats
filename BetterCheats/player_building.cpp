@@ -133,15 +133,26 @@ namespace BetterCheats::Panels::Building
 		std::mutex                  g_heatGateLock;
 		std::atomic<bool>           g_deconstructWindowsDuringWaves{ false };
 
-		bool IsWindow(SDK::AActor* actor)
+		bool IsWindowId(SDK::ECrBuildingID id)
+		{
+			return id == SDK::ECrBuildingID::ViewportLeft  || id == SDK::ECrBuildingID::ViewportMiddle
+			    || id == SDK::ECrBuildingID::ViewportRight || id == SDK::ECrBuildingID::ViewportSingle;
+		}
+
+		bool TryGetBuildingId(SDK::AActor* actor, SDK::ECrBuildingID& out)
 		{
 			SDK::UClass* buildingClass = SDK::ACrBuildingActorBase::StaticClass();
 			if (!actor || !buildingClass || !actor->IsA(buildingClass))
 				return false;
 
-			const SDK::ECrBuildingID id = static_cast<SDK::ACrBuildingActorBase*>(actor)->GetBuildingID();
-			return id == SDK::ECrBuildingID::ViewportLeft  || id == SDK::ECrBuildingID::ViewportMiddle
-			    || id == SDK::ECrBuildingID::ViewportRight || id == SDK::ECrBuildingID::ViewportSingle;
+			out = static_cast<SDK::ACrBuildingActorBase*>(actor)->GetBuildingID();
+			return true;
+		}
+
+		bool IsWindow(SDK::AActor* actor)
+		{
+			SDK::ECrBuildingID id{};
+			return TryGetBuildingId(actor, id) && IsWindowId(id);
 		}
 
 		// IPluginMemoryUtils::Patch logs every write, and this flips the jump on
@@ -205,6 +216,78 @@ namespace BetterCheats::Panels::Building
 			{
 				return nullptr;
 			}
+		}
+
+		// -------------------------------------------------------------------------
+		// Build Windows Anywhere
+		// A habitat's built-in machines (Item Printer, Food Processor and the rest)
+		// are not custom buildings, so they are never registered on the wall slot
+		// they fill: UCrBuildingStabilitySubsystem::IsSocketFree still reports the
+		// slot free and the window snaps into it. What turns the ghost red is the
+		// collision verdict, from the main mesh overlap or the box pass after it,
+		// because the machine is neither snapped to nor connected to the window.
+		//
+		// While a window sits snapped to a habitat, those two building-collision
+		// verdicts count as Valid. Everything else stays the game's: a slot that
+		// holds a window, airlock or bridge is refused before this by
+		// IsSocketFree, a window off a habitat wall gets no relief, and players,
+		// drones, other placement helpers, plants, stability, sockets, base-core
+		// areas and resources keep their own verdicts.
+		// -------------------------------------------------------------------------
+
+		using CheckMainMeshCollisionFn = uint8_t(__fastcall*)(SDK::ACrAPHelper* self, const void* placementData);
+		using GetBoxCollisionResultFn  = uint8_t(__fastcall*)(SDK::ACrAPHelper* self, const void* min, const void* max,
+			const void* ignoredActors, const void* ignoredClasses, bool flag);
+
+		constexpr uint8_t kPlacementValid    = 1;  // EAuAPlacementConditionResult::Valid
+		constexpr uint8_t kIsColliding       = 40; // EAuAPlacementConditionResult::IsColliding
+		constexpr uint8_t kBuildingColliding = 43; // EAuAPlacementConditionResult::BuildingColliding
+
+		CheckMainMeshCollisionFn g_originalCheckMainMeshCollision = nullptr;
+		GetBoxCollisionResultFn  g_originalGetBoxCollisionResult  = nullptr;
+		HookHandle               g_hookCheckMainMeshCollision     = nullptr;
+		HookHandle               g_hookGetBoxCollisionResult      = nullptr;
+		std::atomic<bool>        g_buildWindowsAnywhere{ false };
+
+		bool IsWindowInHabitatSlot(SDK::ACrAPHelper* helper)
+		{
+			if (!helper || !helper->BuildingData || !IsWindowId(helper->BuildingData->BuildingID))
+				return false;
+
+			for (SDK::AActor* snapped : helper->SnappedActors)
+			{
+				SDK::ECrBuildingID id{};
+				if (TryGetBuildingId(snapped, id)
+				    && (id == SDK::ECrBuildingID::HabitatBig || id == SDK::ECrBuildingID::HabitatSmall))
+					return true;
+			}
+			return false;
+		}
+
+		uint8_t RelaxForWindow(SDK::ACrAPHelper* helper, uint8_t result)
+		{
+			if ((result != kBuildingColliding && result != kIsColliding) || !g_buildWindowsAnywhere.load())
+				return result;
+
+			try
+			{
+				return IsWindowInHabitatSlot(helper) ? kPlacementValid : result;
+			}
+			catch (...)
+			{
+				return result;
+			}
+		}
+
+		uint8_t __fastcall Detour_CheckMainMeshCollision(SDK::ACrAPHelper* self, const void* placementData)
+		{
+			return RelaxForWindow(self, g_originalCheckMainMeshCollision(self, placementData));
+		}
+
+		uint8_t __fastcall Detour_GetBoxCollisionResult(SDK::ACrAPHelper* self, const void* min, const void* max,
+			const void* ignoredActors, const void* ignoredClasses, bool flag)
+		{
+			return RelaxForWindow(self, g_originalGetBoxCollisionResult(self, min, max, ignoredActors, ignoredClasses, flag));
 		}
 
 		// -------------------------------------------------------------------------
@@ -357,6 +440,32 @@ namespace BetterCheats::Panels::Building
 			else
 				LOG_INFO("Building: FindDeconstructibleTarget hook installed");
 		}
+
+		// Both hooks or neither: one alone would relax only half the verdict.
+		if (aob.CheckMainMeshCollision_Custom)
+		{
+			g_hookCheckMainMeshCollision = hooks->Install(
+				aob.CheckMainMeshCollision_Custom,
+				reinterpret_cast<void*>(&Detour_CheckMainMeshCollision),
+				reinterpret_cast<void**>(&g_originalCheckMainMeshCollision));
+			if (g_hookCheckMainMeshCollision)
+			{
+				g_hookGetBoxCollisionResult = hooks->Install(
+					aob.GetBoxCollisionResult,
+					reinterpret_cast<void*>(&Detour_GetBoxCollisionResult),
+					reinterpret_cast<void**>(&g_originalGetBoxCollisionResult));
+				if (!g_hookGetBoxCollisionResult)
+				{
+					hooks->Remove(g_hookCheckMainMeshCollision);
+					g_hookCheckMainMeshCollision = nullptr;
+				}
+			}
+
+			if (!g_hookCheckMainMeshCollision)
+				LOG_WARN("Building: failed to install the collision hooks - Build Windows Anywhere stays off");
+			else
+				LOG_INFO("Building: CheckMainMeshCollision and GetBoxCollisionResult hooks installed");
+		}
 	}
 
 	void Shutdown()
@@ -401,6 +510,17 @@ namespace BetterCheats::Panels::Building
 		if (g_heatGate)
 			WriteHeatGate(g_heatGateBytes);
 		g_deconstructWindowsDuringWaves = false;
+
+		if (hooks && g_hookCheckMainMeshCollision)
+		{
+			hooks->Remove(g_hookGetBoxCollisionResult);
+			hooks->Remove(g_hookCheckMainMeshCollision);
+			g_hookGetBoxCollisionResult      = nullptr;
+			g_hookCheckMainMeshCollision     = nullptr;
+			g_originalGetBoxCollisionResult  = nullptr;
+			g_originalCheckMainMeshCollision = nullptr;
+		}
+		g_buildWindowsAnywhere = false;
 
 		if (g_unlockAllBuildings)
 		{
@@ -468,6 +588,7 @@ namespace BetterCheats::Panels::Building
 		g_unlockAllBuildings = SessionConfig::Get("playerBuilding.unlockAllBuildings", false);
 		g_unlockAllRecipes   = SessionConfig::Get("playerBuilding.unlockAllRecipes", false);
 		g_deconstructWindowsDuringWaves = SessionConfig::Get("playerBuilding.deconstructWindowsDuringWaves", false);
+		g_buildWindowsAnywhere          = SessionConfig::Get("playerBuilding.buildWindowsAnywhere", false);
 
 		LOG_INFO("Building: applied saved config for session '%s'.", SessionConfig::GetSessionName().c_str());
 	}
@@ -481,7 +602,7 @@ namespace BetterCheats::Panels::Building
 		// same "above every control" position every group uses.
 		{
 			static BetterCheats::UI::SavedPresetRowState s_presetRow;
-			constexpr int kFieldCount = 5;
+			constexpr int kFieldCount = 6;
 			BetterCheats::PresetStore::Field fields[kFieldCount];
 
 			auto getLive = [](BetterCheats::PresetStore::Field* out)
@@ -491,6 +612,7 @@ namespace BetterCheats::Panels::Building
 				out[2] = { "unlockAllBuildings",  g_unlockAllBuildings  ? 1.0f : 0.0f };
 				out[3] = { "unlockAllRecipes",    g_unlockAllRecipes    ? 1.0f : 0.0f };
 				out[4] = { "deconstructWindowsDuringWaves", g_deconstructWindowsDuringWaves.load() ? 1.0f : 0.0f };
+				out[5] = { "buildWindowsAnywhere", g_buildWindowsAnywhere.load() ? 1.0f : 0.0f };
 			};
 			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
 			{
@@ -503,6 +625,12 @@ namespace BetterCheats::Panels::Building
 					const bool v = f[4].value != 0.0f;
 					g_deconstructWindowsDuringWaves = v;
 					SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", v);
+				}
+				if (count > 5)
+				{
+					const bool v = f[5].value != 0.0f;
+					g_buildWindowsAnywhere = v;
+					SessionConfig::Set("playerBuilding.buildWindowsAnywhere", v);
 				}
 			};
 			auto isBuiltin      = [](const char*) { return false; };
@@ -545,6 +673,18 @@ namespace BetterCheats::Panels::Building
 				SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", deconstructWindows);
 			}
 			imgui->SetItemTooltip("Lets habitat windows be deconstructed while a wave has heated them. Other heated buildings stay protected.");
+
+			imgui->TableNextRow(0, 0.0f);
+			imgui->TableSetColumnIndex(0);
+			imgui->Text("Build Windows Anywhere");
+			imgui->TableSetColumnIndex(1);
+			bool buildWindowsAnywhere = g_buildWindowsAnywhere.load();
+			if (imgui->Checkbox("##build_windows_anywhere", &buildWindowsAnywhere))
+			{
+				g_buildWindowsAnywhere = buildWindowsAnywhere;
+				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", buildWindowsAnywhere);
+			}
+			imgui->SetItemTooltip("Lets a window go into a habitat wall slot that holds one of the habitat's machines. Other pieces keep the normal rules.");
 
 			imgui->EndTable();
 		}
