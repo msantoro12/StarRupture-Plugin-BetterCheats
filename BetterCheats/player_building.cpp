@@ -223,16 +223,24 @@ namespace BetterCheats::Panels::Building
 		// A habitat's built-in machines (Item Printer, Food Processor and the rest)
 		// are not custom buildings, so they are never registered on the wall slot
 		// they fill: UCrBuildingStabilitySubsystem::IsSocketFree still reports the
-		// slot free and the window snaps into it. What turns the ghost red is the
-		// collision verdict, from the main mesh overlap or the box pass after it,
-		// because the machine is neither snapped to nor connected to the window.
+		// slot free and the window snaps into it. What turns the ghost red is a
+		// collision verdict, from the main mesh overlap, the vertical sweep in
+		// GetCollisionConditionResult or the box pass, because the machine is
+		// neither snapped to nor connected to the window.
 		//
-		// While a window sits snapped to a habitat, those two building-collision
-		// verdicts count as Valid. Everything else stays the game's: a slot that
-		// holds a window, airlock or bridge is refused before this by
-		// IsSocketFree, a window off a habitat wall gets no relief, and players,
-		// drones, other placement helpers, plants, stability, sockets, base-core
-		// areas and resources keep their own verdicts.
+		// While a window sits snapped to a habitat or the Hub, BuildingColliding
+		// and IsColliding from those checks count as Valid. Both overlap passes
+		// rank BuildingColliding above creatures, other characters, balloons,
+		// plants and actors they count as invalid, so whenever a building is in
+		// the window's volume, those are let through with it. Still refused:
+		// players and drones in the collision box (the box pass ranks them above
+		// buildings), a slot that holds a window, airlock, bridge or personal
+		// storage (IsSocketFree, before this), and a window not snapped to a
+		// habitat or the Hub. Stability, sockets, base-core areas, terrain and
+		// resources keep their own verdicts.
+		//
+		// The placing client decides placement, so this covers your own
+		// placements in any world, including as a client, and nobody else's.
 		// -------------------------------------------------------------------------
 
 		using CheckMainMeshCollisionFn = uint8_t(__fastcall*)(SDK::ACrAPHelper* self, const void* placementData);
@@ -243,10 +251,12 @@ namespace BetterCheats::Panels::Building
 		constexpr uint8_t kIsColliding       = 40; // EAuAPlacementConditionResult::IsColliding
 		constexpr uint8_t kBuildingColliding = 43; // EAuAPlacementConditionResult::BuildingColliding
 
-		CheckMainMeshCollisionFn g_originalCheckMainMeshCollision = nullptr;
-		GetBoxCollisionResultFn  g_originalGetBoxCollisionResult  = nullptr;
-		HookHandle               g_hookCheckMainMeshCollision     = nullptr;
-		HookHandle               g_hookGetBoxCollisionResult      = nullptr;
+		CheckMainMeshCollisionFn g_originalCheckMainMeshCollision      = nullptr;
+		CheckMainMeshCollisionFn g_originalGetCollisionConditionResult = nullptr;
+		GetBoxCollisionResultFn  g_originalGetBoxCollisionResult       = nullptr;
+		HookHandle               g_hookCheckMainMeshCollision          = nullptr;
+		HookHandle               g_hookGetCollisionConditionResult     = nullptr;
+		HookHandle               g_hookGetBoxCollisionResult           = nullptr;
 		std::atomic<bool>        g_buildWindowsAnywhere{ false };
 
 		bool IsWindowInHabitatSlot(SDK::ACrAPHelper* helper)
@@ -258,12 +268,15 @@ namespace BetterCheats::Panels::Building
 			{
 				SDK::ECrBuildingID id{};
 				if (TryGetBuildingId(snapped, id)
-				    && (id == SDK::ECrBuildingID::HabitatBig || id == SDK::ECrBuildingID::HabitatSmall))
+				    && (id == SDK::ECrBuildingID::HabitatBig || id == SDK::ECrBuildingID::HabitatSmall
+				        || id == SDK::ECrBuildingID::Hub))
 					return true;
 			}
 			return false;
 		}
 
+		// Shared by all three checks. The box pass never returns IsColliding, so
+		// only BuildingColliding matters there.
 		uint8_t RelaxForWindow(SDK::ACrAPHelper* helper, uint8_t result)
 		{
 			if ((result != kBuildingColliding && result != kIsColliding) || !g_buildWindowsAnywhere.load())
@@ -284,10 +297,30 @@ namespace BetterCheats::Panels::Building
 			return RelaxForWindow(self, g_originalCheckMainMeshCollision(self, placementData));
 		}
 
+		// The main mesh verdict is relaxed above, so the terrain check and the
+		// vertical sweep still run. This catches a BuildingColliding from the sweep.
+		uint8_t __fastcall Detour_GetCollisionConditionResult(SDK::ACrAPHelper* self, const void* placementData)
+		{
+			return RelaxForWindow(self, g_originalGetCollisionConditionResult(self, placementData));
+		}
+
 		uint8_t __fastcall Detour_GetBoxCollisionResult(SDK::ACrAPHelper* self, const void* min, const void* max,
 			const void* ignoredActors, const void* ignoredClasses, bool flag)
 		{
 			return RelaxForWindow(self, g_originalGetBoxCollisionResult(self, min, max, ignoredActors, ignoredClasses, flag));
+		}
+
+		void RemoveWindowsAnywhereHooks(IPluginHookUtils* hooks)
+		{
+			for (HookHandle* hook : { &g_hookGetBoxCollisionResult, &g_hookGetCollisionConditionResult, &g_hookCheckMainMeshCollision })
+			{
+				if (*hook)
+					hooks->Remove(*hook);
+				*hook = nullptr;
+			}
+			g_originalGetBoxCollisionResult       = nullptr;
+			g_originalGetCollisionConditionResult = nullptr;
+			g_originalCheckMainMeshCollision      = nullptr;
 		}
 
 		// -------------------------------------------------------------------------
@@ -441,30 +474,31 @@ namespace BetterCheats::Panels::Building
 				LOG_INFO("Building: FindDeconstructibleTarget hook installed");
 		}
 
-		// Both hooks or neither: one alone would relax only half the verdict.
+		// All three hooks or none: fewer would relax only part of the verdict.
 		if (aob.CheckMainMeshCollision_Custom)
 		{
 			g_hookCheckMainMeshCollision = hooks->Install(
 				aob.CheckMainMeshCollision_Custom,
 				reinterpret_cast<void*>(&Detour_CheckMainMeshCollision),
 				reinterpret_cast<void**>(&g_originalCheckMainMeshCollision));
-			if (g_hookCheckMainMeshCollision)
-			{
-				g_hookGetBoxCollisionResult = hooks->Install(
-					aob.GetBoxCollisionResult,
-					reinterpret_cast<void*>(&Detour_GetBoxCollisionResult),
-					reinterpret_cast<void**>(&g_originalGetBoxCollisionResult));
-				if (!g_hookGetBoxCollisionResult)
-				{
-					hooks->Remove(g_hookCheckMainMeshCollision);
-					g_hookCheckMainMeshCollision = nullptr;
-				}
-			}
+			g_hookGetCollisionConditionResult = hooks->Install(
+				aob.GetCollisionConditionResult_Custom,
+				reinterpret_cast<void*>(&Detour_GetCollisionConditionResult),
+				reinterpret_cast<void**>(&g_originalGetCollisionConditionResult));
+			g_hookGetBoxCollisionResult = hooks->Install(
+				aob.GetBoxCollisionResult,
+				reinterpret_cast<void*>(&Detour_GetBoxCollisionResult),
+				reinterpret_cast<void**>(&g_originalGetBoxCollisionResult));
 
-			if (!g_hookCheckMainMeshCollision)
-				LOG_WARN("Building: failed to install the collision hooks - Build Windows Anywhere stays off");
+			if (g_hookCheckMainMeshCollision && g_hookGetCollisionConditionResult && g_hookGetBoxCollisionResult)
+			{
+				LOG_INFO("Building: CheckMainMeshCollision, GetCollisionConditionResult and GetBoxCollisionResult hooks installed");
+			}
 			else
-				LOG_INFO("Building: CheckMainMeshCollision and GetBoxCollisionResult hooks installed");
+			{
+				RemoveWindowsAnywhereHooks(hooks);
+				LOG_WARN("Building: failed to install the collision hooks - Build Windows Anywhere will do nothing");
+			}
 		}
 	}
 
@@ -511,15 +545,8 @@ namespace BetterCheats::Panels::Building
 			WriteHeatGate(g_heatGateBytes);
 		g_deconstructWindowsDuringWaves = false;
 
-		if (hooks && g_hookCheckMainMeshCollision)
-		{
-			hooks->Remove(g_hookGetBoxCollisionResult);
-			hooks->Remove(g_hookCheckMainMeshCollision);
-			g_hookGetBoxCollisionResult      = nullptr;
-			g_hookCheckMainMeshCollision     = nullptr;
-			g_originalGetBoxCollisionResult  = nullptr;
-			g_originalCheckMainMeshCollision = nullptr;
-		}
+		if (hooks)
+			RemoveWindowsAnywhereHooks(hooks);
 		g_buildWindowsAnywhere = false;
 
 		if (g_unlockAllBuildings)
@@ -684,7 +711,9 @@ namespace BetterCheats::Panels::Building
 				g_buildWindowsAnywhere = buildWindowsAnywhere;
 				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", buildWindowsAnywhere);
 			}
-			imgui->SetItemTooltip("Lets a window go into a habitat wall slot that holds one of the habitat's machines. Other pieces keep the normal rules.");
+			imgui->SetItemTooltip("Lets a window go into a habitat or Hub wall slot even when a machine or any other building is in it. "
+				"Anything else in the slot is then let through too, except players and drones. "
+				"Applies to your own placements, also as a client. Other pieces keep the normal rules.");
 
 			imgui->EndTable();
 		}

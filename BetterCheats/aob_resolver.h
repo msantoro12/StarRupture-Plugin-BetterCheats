@@ -52,9 +52,10 @@ namespace BetterCheats::AOB
 		uintptr_t FindDeconstructibleTarget          = 0;
 		uintptr_t FindDeconstructibleTarget_HeatGate = 0;
 
-		// Build Windows Anywhere: both resolved, or both 0.
-		uintptr_t CheckMainMeshCollision_Custom = 0;
-		uintptr_t GetBoxCollisionResult         = 0;
+		// Build Windows Anywhere: all three resolved, or all 0.
+		uintptr_t CheckMainMeshCollision_Custom      = 0;
+		uintptr_t GetCollisionConditionResult_Custom = 0;
+		uintptr_t GetBoxCollisionResult              = 0;
 
 		// Tools
 		uintptr_t GetMiningDamage               = 0;
