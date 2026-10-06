@@ -56,6 +56,10 @@ namespace BetterCheats::AOB
 		uintptr_t CheckMainMeshCollision_Custom = 0;
 		uintptr_t GetBoxCollisionResult         = 0;
 
+		// Build Benches Anywhere: both resolved, or both 0.
+		uintptr_t GetSnappedSocket = 0;
+		uintptr_t IsSocketFree     = 0;
+
 		// Tools
 		uintptr_t GetMiningDamage               = 0;
 		uintptr_t UpdateRepHarvesterHeatStack   = 0;
