@@ -763,7 +763,7 @@ namespace BetterCheats::Panels::Building
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("No Build Cost");
 			Description(imgui,
-				"Placing a building costs no resources.");
+				"Lets you place buildings without having the resources for them.");
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##no_build_cost", &g_noBuildCost))
 				SessionConfig::Set("playerBuilding.noBuildCost", g_noBuildCost);
