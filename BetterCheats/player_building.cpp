@@ -2,7 +2,6 @@
 #include "plugin_helpers.h"
 #include "aob_resolver.h"
 #include "session_config.h"
-#include "ui_widgets.h"
 
 #include "AuActorPlacement_classes.hpp"
 #include "Chimera_classes.hpp"
@@ -737,60 +736,21 @@ namespace BetterCheats::Panels::Building
 		LOG_INFO("Building: applied saved config for session '%s'.", SessionConfig::GetSessionName().c_str());
 	}
 
+	namespace
+	{
+		// The row's description, wrapped to its column, under the title.
+		void Description(IModLoaderImGui* imgui, const char* text)
+		{
+			imgui->PushTextWrapPos(0.0f);
+			imgui->TextDisabled(text);
+			imgui->PopTextWrapPos();
+		}
+	}
+
 	void RenderImGui(IModLoaderImGui* imgui)
 	{
 		// ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp
 		constexpr int kTableFlags    = (1 << 6) | (1 << 9) | (3 << 13);
-
-		// No built-in presets here, so saved presets sit at the very top --
-		// same "above every control" position every group uses.
-		{
-			static BetterCheats::UI::SavedPresetRowState s_presetRow;
-			constexpr int kFieldCount = 7;
-			BetterCheats::PresetStore::Field fields[kFieldCount];
-
-			auto getLive = [](BetterCheats::PresetStore::Field* out)
-			{
-				out[0] = { "noBuildCost",         g_noBuildCost         ? 1.0f : 0.0f };
-				out[1] = { "noStabilityCheck",    g_noStabilityCheck    ? 1.0f : 0.0f };
-				out[2] = { "unlockAllBuildings",  g_unlockAllBuildings  ? 1.0f : 0.0f };
-				out[3] = { "unlockAllRecipes",    g_unlockAllRecipes    ? 1.0f : 0.0f };
-				out[4] = { "deconstructWindowsDuringWaves", g_deconstructWindowsDuringWaves.load() ? 1.0f : 0.0f };
-				out[5] = { "buildWindowsAnywhere", g_buildWindowsAnywhere.load() ? 1.0f : 0.0f };
-				out[6] = { "buildBenchesAnywhere", g_buildBenchesAnywhere.load() ? 1.0f : 0.0f };
-			};
-			auto applyFields = [](const BetterCheats::PresetStore::Field* f, int count)
-			{
-				if (count > 0) { g_noBuildCost        = f[0].value != 0.0f; SessionConfig::Set("playerBuilding.noBuildCost", g_noBuildCost); }
-				if (count > 1) { g_noStabilityCheck   = f[1].value != 0.0f; SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck); }
-				if (count > 2) { g_unlockAllBuildings = f[2].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllBuildings", g_unlockAllBuildings); }
-				if (count > 3) { g_unlockAllRecipes   = f[3].value != 0.0f; SessionConfig::Set("playerBuilding.unlockAllRecipes", g_unlockAllRecipes); }
-				if (count > 4)
-				{
-					const bool v = f[4].value != 0.0f;
-					g_deconstructWindowsDuringWaves = v;
-					SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", v);
-				}
-				if (count > 5)
-				{
-					const bool v = f[5].value != 0.0f;
-					g_buildWindowsAnywhere = v;
-					SessionConfig::Set("playerBuilding.buildWindowsAnywhere", v);
-				}
-				if (count > 6)
-				{
-					const bool v = f[6].value != 0.0f;
-					g_buildBenchesAnywhere = v;
-					SessionConfig::Set("playerBuilding.buildBenchesAnywhere", v);
-				}
-			};
-			auto isBuiltin      = [](const char*) { return false; };
-			auto computeSuggest = [](char* out, int cap) { snprintf(out, cap, "Custom"); };
-
-			BetterCheats::UI::RenderSavedPresetsRow(imgui, "building_saved_presets", "Building",
-				fields, kFieldCount, getLive, applyFields, isBuiltin, computeSuggest, s_presetRow);
-		}
-		imgui->Spacing();
 
 		imgui->SeparatorText("Placement");
 
@@ -802,6 +762,8 @@ namespace BetterCheats::Panels::Building
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("No Build Cost");
+			Description(imgui,
+				"Lets you place buildings without having the resources for them.");
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##no_build_cost", &g_noBuildCost))
 				SessionConfig::Set("playerBuilding.noBuildCost", g_noBuildCost);
@@ -809,6 +771,8 @@ namespace BetterCheats::Panels::Building
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("No Stability Check");
+			Description(imgui,
+				"Lets you place buildings that the stability check would otherwise refuse.");
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##no_stability_check", &g_noStabilityCheck))
 				SessionConfig::Set("playerBuilding.noStabilityCheck", g_noStabilityCheck);
@@ -816,6 +780,8 @@ namespace BetterCheats::Panels::Building
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Deconstruct Windows During Waves");
+			Description(imgui,
+				"Lets habitat windows be deconstructed while a wave has heated them. Other heated buildings stay protected.");
 			imgui->TableSetColumnIndex(1);
 			bool deconstructWindows = g_deconstructWindowsDuringWaves.load();
 			if (imgui->Checkbox("##deconstruct_windows_waves", &deconstructWindows))
@@ -823,11 +789,14 @@ namespace BetterCheats::Panels::Building
 				g_deconstructWindowsDuringWaves = deconstructWindows;
 				SessionConfig::Set("playerBuilding.deconstructWindowsDuringWaves", deconstructWindows);
 			}
-			imgui->SetItemTooltip("Lets habitat windows be deconstructed while a wave has heated them. Other heated buildings stay protected.");
 
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Build Windows Anywhere");
+			Description(imgui,
+				"Lets a window go into a habitat or Hub wall slot even when a machine or anything else is in it, "
+				"except players and drones in its collision box. "
+				"Applies to your own placements, also as a client. Other pieces keep the normal rules.");
 			imgui->TableSetColumnIndex(1);
 			bool buildWindowsAnywhere = g_buildWindowsAnywhere.load();
 			if (imgui->Checkbox("##build_windows_anywhere", &buildWindowsAnywhere))
@@ -835,13 +804,14 @@ namespace BetterCheats::Panels::Building
 				g_buildWindowsAnywhere = buildWindowsAnywhere;
 				SessionConfig::Set("playerBuilding.buildWindowsAnywhere", buildWindowsAnywhere);
 			}
-			imgui->SetItemTooltip("Lets a window go into a habitat or Hub wall slot even when a machine or anything else is in it, "
-				"except players and drones in its collision box. "
-				"Applies to your own placements, also as a client. Other pieces keep the normal rules.");
 
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Build Benches Anywhere");
+			Description(imgui,
+				"Lets a habitat machine (Item Printer, Food Processor, Suit Workshop and the rest) go into a habitat or Hub "
+				"wall slot even when a window, another piece or anything else is in it, except players and drones in its collision box. "
+				"Applies to your own placements, also as a client. Other pieces keep the normal rules.");
 			imgui->TableSetColumnIndex(1);
 			bool buildBenchesAnywhere = g_buildBenchesAnywhere.load();
 			if (imgui->Checkbox("##build_benches_anywhere", &buildBenchesAnywhere))
@@ -849,9 +819,6 @@ namespace BetterCheats::Panels::Building
 				g_buildBenchesAnywhere = buildBenchesAnywhere;
 				SessionConfig::Set("playerBuilding.buildBenchesAnywhere", buildBenchesAnywhere);
 			}
-			imgui->SetItemTooltip("Lets a habitat machine (Item Printer, Food Processor, Suit Workshop and the rest) go into a habitat or Hub "
-				"wall slot even when a window, another piece or anything else is in it, except players and drones in its collision box. "
-				"Applies to your own placements, also as a client. Other pieces keep the normal rules.");
 
 			imgui->EndTable();
 		}
@@ -870,6 +837,8 @@ namespace BetterCheats::Panels::Building
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Unlock All Buildings");
+			Description(imgui,
+				"Makes every building available in the build menu, without the research or reputation it needs.");
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##unlock_buildings", &g_unlockAllBuildings))
 				SessionConfig::Set("playerBuilding.unlockAllBuildings", g_unlockAllBuildings);
@@ -877,6 +846,8 @@ namespace BetterCheats::Panels::Building
 			imgui->TableNextRow(0, 0.0f);
 			imgui->TableSetColumnIndex(0);
 			imgui->Text("Unlock All Recipes");
+			Description(imgui,
+				"Makes every crafting recipe available, researched or not.");
 			imgui->TableSetColumnIndex(1);
 			if (imgui->Checkbox("##unlock_recipes", &g_unlockAllRecipes))
 				SessionConfig::Set("playerBuilding.unlockAllRecipes", g_unlockAllRecipes);
