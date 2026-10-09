@@ -192,8 +192,6 @@ namespace BetterCheats::AOB
 
 		ResolveFunction(self, scanner, g_resolved.GetMiningDamage,
 			"UCrMiningToolComponent::GetMiningDamage", GetMiningDamage);
-		ResolveFunction(self, scanner, g_resolved.UpdateRepHarvesterHeatStack,
-			"UCrMiningToolComponent::UpdateRepHarvesterHeatStack", UpdateRepHarvesterHeatStack);
 
 		ResolveFunction(self, scanner, g_resolved.AddNewItem,
 			"UAuItemsComponent::AddNewItem", AddNewItem);
