@@ -2,13 +2,15 @@
 
 A modular in-game cheat menu for [StarRupture](https://store.steampowered.com/app/1631270/StarRupture/), built on the StarRupture ModLoader. Provides a categorized ImGui panel for player, world, machine, and enemy cheats, with per-save persistence of your settings.
 
+<a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> Reworked and extended by @msantoro12, built with Claude Code.
+
 **Target:** Game client only
 
 ---
 
 ## What It Does
 
-BetterCheats registers an in-game ImGui panel with a sidebar of cheat categories. The menu only appears during a single-player `ChimeraMain` world session -- it stays hidden on the main menu and other game modes.
+BetterCheats registers an in-game ImGui panel with a sidebar of cheat categories. The menu only appears during a single-player `ChimeraMain` world session (or any session when `EnableCheatsInMultiplayer` is on) -- it stays hidden on the main menu and other game modes.
 
 | Category | Sub-tabs | Examples |
 |---|---|---|
@@ -42,11 +44,13 @@ The game refuses to shrink a grid below the slots that are currently in use, so 
 |---|---|
 | **No Build Cost** | Place buildings without having the resources for them. |
 | **No Stability Check** | Place buildings the stability check would otherwise refuse. |
-| **Deconstruct Windows During Waves** | Lets a window piece (any of the four viewport pieces) be deconstructed while a wave has heated it. Other heated buildings stay protected. |
+| **Deconstruct Windows During Waves** | Lets a window piece (any of the four window pieces) be deconstructed while a wave has heated it. Other heated buildings stay protected. |
 | **Build Windows Anywhere** | Puts a window into a habitat or Hub wall slot even when a machine or another building is in it. |
 | **Build Benches Anywhere** | Puts a habitat machine into a habitat or Hub wall slot even when a window or another building is in it. |
 
-The **Research** table below it has **Unlock All Buildings** and **Unlock All Recipes**. They warn that the changes may end up in your save file even though care is taken to avoid it.
+Below it, **Research** has **Unlock All Buildings** and **Unlock All Recipes**, under a warning that the changes may still end up in your save file even though care is taken to avoid it.
+
+### Windows and benches anywhere <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
 **Build Windows Anywhere** and **Build Benches Anywhere** only change the game's collision checks for the piece you are placing. A window or machine that snaps to a habitat or the Hub counts as valid even when a building overlaps it, so the ghost goes green instead of red. Still refused:
 
@@ -54,6 +58,8 @@ The **Research** table below it has **Unlock All Buildings** and **Unlock All Re
 - a window that is not snapped to a habitat or the Hub (free-standing windows, or windows on open ground);
 - a window into a slot that already holds a window, airlock or bridge;
 - anything the game checks separately from collision: stability (unless **No Stability Check** is on), base-core areas, terrain, water and resources.
+
+When a building is in the piece's volume, creatures, other characters and plants in it are let through too: the game ranks a building collision above them. They are not let through on their own.
 
 The benches are the Analyzer, Armory, Cloning Bed, Food Processor, Item Printer, Recipe Table, Recycler, Research Terminal, Suit Workshop and Upgrade Station. Because the game only records that a slot is taken, not by what, **Build Benches Anywhere** also lets a bench into a slot that holds a window, an airlock, a bridge or personal storage.
 
@@ -63,11 +69,11 @@ The placing player decides placement, so both options cover your own placements 
 
 **Player -> Tools -> Mining -> No Handheld Drill Overheat** stops the handheld drill from heating up, in single player. While it is on, BetterCheats keeps the game's own `Cheat.UnlimitedWeaponHeat` gameplay tag on your character, the tag the game's built-in unlimited-heat cheat sets, and the game's heat logic stops adding heat while the tag is there.
 
-Switching the option on or off takes effect on the next tick, and a new character after a respawn or travel is tagged within a second. A drill that is already hot cools down normally instead of being cleared. BetterCheats only ever removes a tag it added itself: if the game's own cheat already holds the tag, it leaves it alone. The tag comes off when you switch the option off, when the world ends and when the plugin unloads.
+Switching the option on or off takes effect on the next tick, and a new character after a respawn or travel is tagged within a second. A drill that is already hot cools down normally instead of being cleared. BetterCheats only ever removes a tag it added itself: if the game's own cheat already holds the tag, it leaves it alone. The tag comes off when you switch the option off, when the world ends and when the plugin unloads (with mod loader 1.22.0 or newer; an older loader leaves it on until you respawn).
 
-### Grenade damage scale
+### Grenade damage scale <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a>
 
-Mod console command `bc_grenadedmg [scale]` multiplies the equipped grenade's base damage, to test whether its explosion reads that value. With no argument it prints the current scale. The scale is a number from 0 to 100, `1` (the default) leaves the grenade alone, and it applies while a grenade is equipped. It is restored when you switch grenades, on unload and on RELOAD, and it is not saved between launches. The **Grenade** tab keeps showing the game's own value, not the scaled one. Each change is written to `ModLoader.log` as a `GrenadeDamageProbe:` line, with the game's value, the expected value and the value read back a tick later.
+The `bc_grenadedmg [scale]` mod console command multiplies the equipped grenade's base damage, to test whether its explosion reads that value. With no argument it prints the current scale. The scale is a number from 0 to 100, `1` (the default) leaves the grenade alone, and it applies while a grenade is equipped. It is restored when you switch grenades, on unload and on RELOAD (with mod loader 1.22.0 or newer), and it is not saved between launches. The Weapon panel does not show the scaled value. Each change is logged to `modloader.log` with the game's value, the expected value and the value read back a tick later.
 
 ### Per-save settings
 
@@ -137,4 +143,4 @@ This is a single-player cheat menu intended for personal use. Use at your own ri
 
 ## Credits
 
-Additional features by @msantoro12, built with Claude Code.
+<a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> marks features added by @msantoro12.
