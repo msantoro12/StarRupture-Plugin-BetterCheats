@@ -937,6 +937,8 @@ namespace BetterCheats::Panels::Movement
 		// one stays editable afterwards.
 		const int kCascadeMoveSpeed[]    = { kRawNormalSpeed, kRawSprintSpeed, kRawCrouchSpeed, kRawADSSpeed };
 		const int kCascadeZiplineSpeed[] = { kRawZipSpeed };
+		constexpr int kCascadeMoveSpeedCount    = static_cast<int>(sizeof(kCascadeMoveSpeed) / sizeof(kCascadeMoveSpeed[0]));
+		constexpr int kCascadeZiplineSpeedCount = static_cast<int>(sizeof(kCascadeZiplineSpeed) / sizeof(kCascadeZiplineSpeed[0]));
 
 		void CascadeToRaws(float value, const int* raws, int count)
 		{
@@ -958,9 +960,9 @@ namespace BetterCheats::Panels::Movement
 		void CascadeAttr(int attr, float value)
 		{
 			if (attr == kAttrMoveSpeed)
-				CascadeToRaws(value, kCascadeMoveSpeed, static_cast<int>(sizeof(kCascadeMoveSpeed) / sizeof(kCascadeMoveSpeed[0])));
+				CascadeToRaws(value, kCascadeMoveSpeed, kCascadeMoveSpeedCount);
 			else if (attr == kAttrZiplineSpeed)
-				CascadeToRaws(value, kCascadeZiplineSpeed, static_cast<int>(sizeof(kCascadeZiplineSpeed) / sizeof(kCascadeZiplineSpeed[0])));
+				CascadeToRaws(value, kCascadeZiplineSpeed, kCascadeZiplineSpeedCount);
 		}
 
 		void ApplyPreset(const Preset& preset)
