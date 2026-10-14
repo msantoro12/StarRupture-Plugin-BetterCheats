@@ -22,7 +22,7 @@ Teleport, Crafters, Rail Drones and Misc are empty placeholders. Logistic Drones
 
 **Rows.** Most settings are one row: label, live value (what the game uses now; red when it differs from your setting; **+buff** tag and a Base / Mods / Ours / Result tooltip), slider, typed box, **-/+**, reset icon. A value that differs from its default is applied; reset turns it off. Multipliers act on base stats, attachments and buffs still add on top.
 
-### Saved Presets<sup>†</sup>
+### Saved Presets<sup>[†](#msantoro12)</sup>
 
 A **Saved Presets** row sits on Power, Self, Inventory, Movement, Skills, Tools and each weapon tab. Pick one to load it. **Save** stores that page's settings (Inventory: Item Stack Sizes only) as `<built-in> Custom` or `Custom` (made unique), **Rename**, **Delete** (asks first). Up to 16 are listed per page; built-in names are reserved. Stored in `Plugins\config\BetterCheats-Presets.ini`, shared by every save.
 
@@ -70,11 +70,11 @@ Search the item list (icon, name, stack size), set **Stacks** (1 or more), press
 
 **Grid.** Any **Columns x Rows** from 8 x 8 to 40 x 40, also via `bc_invsize`. The game won't shrink below slots in use, so empty it first. **Shrink slots to fit the inventory frame** (on by default) scales slots against 8 x 8 (100%): 16 x 16 is 50%, 20 x 20 is 40%, the floor. The frame doesn't scroll, so larger grids overflow. Current grid, Reference grid and Slot size are shown. Saved per save.
 
-#### Plant Pickup<sup>†</sup>
+#### Plant Pickup<sup>[†](#msantoro12)</sup>
 
 Whole-number multiplier, 1x to 5x (default 1x), on what a wild plant, mushroom or rock gives when picked up. Crops (regrowing bushes) are not covered.
 
-#### Item Stack Sizes<sup>†</sup>
+#### Item Stack Sizes<sup>[†](#msantoro12)</sup>
 
 Raises stack caps for new stacks only; existing stacks keep their cap until picked up, split or merged. Raise-only: an item that already stacks higher keeps its size. Non-stacking items are shown but locked. Item beats category beats global.
 
@@ -84,7 +84,7 @@ Raises stack caps for new stacks only; existing stacks keep their cap until pick
 | Category | 1-9999: Combat, Resource, Consumable, Story Item, Alien Item, Valuable, Gem (Movement / Combat / Survival), Uncategorized, Empty Item, Blueprint Item, Other |
 | Item | stock size-9999. Search box, **Only show changed** |
 
-### Weapon<sup>†</sup>
+### Weapon<sup>[†](#msantoro12)</sup>
 
 Tabs: **Pistol**, **Rifle**, **Shotgun**, **Machine Gun**; any other weapon or grenade gets a tab when first equipped. Live values show the weapon in your hand, other tabs an estimate.
 
@@ -145,7 +145,7 @@ Fly mode (**No Clip**) puts the character in flight; **Space** rises, **Left** o
 
 Blue column: live value in game (0.00 in this shot).
 
-#### Tuning rows and presets<sup>†</sup>
+#### Tuning rows and presets<sup>[†](#msantoro12)</sup>
 
 A live line shows MaxWalkSpeed, horizontal speed, JumpZVelocity and stamina. Each row below defaults to 1.00x; an arrow opens finer rows. The top rows cascade into their finer rows (Move Speed into the four gait speeds, Zipline Speed into Base Speed); each stays editable after. Finer rows stay greyed until the stock values are read (load a save); the baseline is captured once and saved per save. **Reset all movement attributes** clears everything.
 
@@ -188,9 +188,9 @@ Off by default, saved per save, with a description under each title.
 
 The Research options sit under a warning that changes may still end up in your save.
 
-- **Deconstruct Windows During Waves**: lets any of the four window pieces be deconstructed while a wave has heated it. Other heated buildings stay protected.<sup>†</sup>
-- **Build Windows Anywhere**: puts a window into a habitat or Hub wall slot even when a machine or other building is in it.<sup>†</sup>
-- **Build Benches Anywhere**: does the same for Analyzer, Armory, Cloning Bed, Food Processor, Item Printer, Recipe Table, Recycler, Research Terminal, Suit Workshop and Upgrade Station. The game only records that a slot is taken, so a bench can also go into a slot holding a window, airlock, bridge or personal storage.<sup>†</sup>
+- **Deconstruct Windows During Waves**: lets any of the four window pieces be deconstructed while a wave has heated it. Other heated buildings stay protected.<sup>[†](#msantoro12)</sup>
+- **Build Windows Anywhere**: puts a window into a habitat or Hub wall slot even when a machine or other building is in it.<sup>[†](#msantoro12)</sup>
+- **Build Benches Anywhere**: does the same for Analyzer, Armory, Cloning Bed, Food Processor, Item Printer, Recipe Table, Recycler, Research Terminal, Suit Workshop and Upgrade Station. The game only records that a slot is taken, so a bench can also go into a slot holding a window, airlock, bridge or personal storage.<sup>[†](#msantoro12)</sup>
 
 The two "anywhere" options relax only the collision check for the piece you place, so the ghost goes green. Your own placements only; in multiplayer they need `EnableCheatsInMultiplayer`. Still refused:
 
@@ -213,7 +213,7 @@ Creatures, characters and plants in the volume are let through only when a build
 
 No Handheld Drill Overheat holds the game's own heat-immunity tag while on; a drill that is already hot cools normally. The tag comes off when you switch it off, the world ends or the plugin unloads (loader 1.22.0 or newer; an older loader leaves it on until you respawn).
 
-#### Mining Power<sup>†</sup>
+#### Mining Power<sup>[†](#msantoro12)</sup>
 
 | Row | Range (default 1.00x) |
 |---|---|
@@ -259,7 +259,7 @@ Two tables, Producers and Consumers: a number box, **Apply** and a reset arrow p
 Mod console commands:
 
 - `bc_invsize <columns> <rows>` (alias `invsize`) resizes the inventory grid, clamped 8-40. No arguments prints the current grid.
-- `bc_grenadedmg [scale]`: multiplies the equipped grenade's base damage (a test probe). Scale 0-100, `1` (default) is unchanged; no argument prints it. Applies while a grenade is equipped, restored on switching grenades, unload and RELOAD (loader 1.22.0 or newer). Not saved.<sup>†</sup>
+- `bc_grenadedmg [scale]`: multiplies the equipped grenade's base damage (a test probe). Scale 0-100, `1` (default) is unchanged; no argument prints it. Applies while a grenade is equipped, restored on switching grenades, unload and RELOAD (loader 1.22.0 or newer). Not saved.<sup>[†](#msantoro12)</sup>
 
 ---
 
@@ -333,6 +333,7 @@ This is a single-player cheat menu intended for personal use. Use at your own ri
 
 Original mod by [@AlienXAXS](https://github.com/AlienXAXS).
 
-Contributors: [@Lorke76](https://github.com/Lorke76), [@msantoro12](https://github.com/msantoro12) (creator of [StarRupture Planner](https://starrupture.goodstuff.software)).
+Contributors:
 
-<sup>†</sup> Added by [@msantoro12](https://github.com/msantoro12), built with Claude Code.
+- [@Lorke76](https://github.com/Lorke76)
+- <a id="msantoro12"></a>[@msantoro12](https://github.com/msantoro12), creator of [StarRupture Planner](https://starrupture.goodstuff.software). Features marked † are his, built with Claude Code.
