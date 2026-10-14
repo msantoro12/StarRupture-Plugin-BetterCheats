@@ -8,7 +8,7 @@ In-game cheat menu for [StarRupture](https://store.steampowered.com/app/1631270/
 
 ## What It Does
 
-**F10** opens the window, **Esc** or **Q** closes it (not rebindable). The pages work only in a `ChimeraMain` world, single player or with `EnableCheatsInMultiplayer` on; elsewhere the window says so. Locks and overrides are enforced every engine tick, menu open or not. Power edits are applied on Apply and on save load.
+**F10** (rebindable in the loader's keybind settings) opens the window; **Esc** or **Q** closes it (not rebindable). The pages work only in a `ChimeraMain` world, single player or with `EnableCheatsInMultiplayer` on; elsewhere the window says so. Locks and overrides are enforced every engine tick, menu open or not. Power edits are applied on Apply and on save load.
 
 | Group | Pages |
 |---|---|
@@ -137,7 +137,7 @@ Fly mode (**No Clip**) puts the character in flight; **Space** rises, **Left** o
 | Control | Does |
 |---|---|
 | **Fly Mode Toggle:** Active | Fly on or off |
-| **Hotkey:** | Click, press a key, Esc cancels. Ctrl, Shift, Alt combos work; no mouse buttons. **Reset** returns F9 |
+| **Hotkey:** | The No Clip key, also rebindable in the loader's keybind settings. Click, press a key, Esc cancels. Ctrl, Shift, Alt combos work; no mouse buttons. **Reset** returns F9 |
 | Pass Through Walls (Clipping) | Default on. Collision off, with a flashing red warning: turning Fly off inside terrain drops you through the world. Off keeps collision and shows a note that Fly is safe to toggle |
 | Fly Speed Multiplier | 1.0-25.0x, default 3.0x. A Top speed line shows km/h, mph and cm/s |
 
@@ -330,6 +330,10 @@ This is a single-player cheat menu intended for personal use. Use at your own ri
 ---
 
 ## Credits
+
+Original mod by [@AlienXAXS](https://github.com/AlienXAXS).
+
+Contributors: [@Lorke76](https://github.com/Lorke76).
 
 <a href="https://github.com/msantoro12"><img src="https://github.com/msantoro12.png?size=40" width="18" height="18" alt="@msantoro12"></a> Reworked and extended by [@msantoro12](https://github.com/msantoro12), creator of [StarRupture Planner](https://starrupture.goodstuff.software). Built with Claude Code.
 
