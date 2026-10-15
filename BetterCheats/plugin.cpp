@@ -121,6 +121,7 @@ static void OnEngineTick(float deltaSeconds)
 	// gate below: closing the menu must still work even if the player left
 	// single-player or the world unloaded out from under an open panel.
 	BetterCheats::CheatMenu::TickPendingClose();
+	BetterCheats::CheatMenu::TickPendingOpen();
 
 	if (!BetterCheats::GameContext::IsInChimeraMain())
 		return;
