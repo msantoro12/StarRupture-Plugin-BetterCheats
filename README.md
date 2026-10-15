@@ -96,7 +96,7 @@ Better Weapons and Less Cost Grenade are modelled on pak mods Update 2 broke, by
 
 ### Movement
 
-<img src="images/movement.png" width="480" alt="Movement page with fly controls, presets and every tuning row, Move Speed expanded after the Sonic Mode preset">
+<img src="images/movement.png" width="480" alt="Movement page with fly controls, presets and every tuning row, Sonic Mode preset applied and Move Speed expanded">
 
 Fly mode (**No Clip**) puts the character in flight. **Space** rises and **Left** or **Right Ctrl** descends (not rebindable; ignored while the menu is open or the game is in the background).
 
