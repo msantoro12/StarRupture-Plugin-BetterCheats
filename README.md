@@ -8,7 +8,7 @@ In-game cheat menu for [StarRupture](https://store.steampowered.com/app/1631270/
 
 ## What It Does
 
-**F10** opens the menu (rebindable in the loader's keybind settings). **Esc** or **Q** closes it (not rebindable). The pages work only in a `ChimeraMain` world, single player or with `EnableCheatsInMultiplayer` on; elsewhere the window says so. Locks and overrides are enforced every engine tick, menu open or not. Power edits are applied on Apply and on save load.
+Open it with **Esc** → **MOD LOADER** → **Config** → **BetterCheats** → the **BetterCheats** button under Plugin Tools, or press **F10**, the shortcut (rebindable in the loader's keybind settings). **Esc** or **Q** closes it (not rebindable). The pages work only in a `ChimeraMain` world, single player or with `EnableCheatsInMultiplayer` on; elsewhere the window says so. Locks and overrides are enforced every engine tick, menu open or not. Power edits are applied on Apply and on save load.
 
 Pages are grouped World, Player, Enemies and Machinery. Teleport, Crafters, Rail Drones and Misc are empty placeholders, and Logistic Drones points to `BetterDrone.ini`.
 
@@ -108,7 +108,7 @@ Fly mode (**No Clip**) puts the character in flight. **Space** rises and **Left*
 
 Each row defaults to 1.00x and an arrow opens finer rows behind it (Move Speed is open in the shot). Speed covers Move Speed, Acceleration, Cap, Floor and Sprint Speed. Jump & Dodge covers Jump Height, Double Jump Cost and Dodge Cost. Stamina & Survival covers Stamina Regen, Slide Stamina Regen, Zipline Speed and Fall Damage (0 removes it).
 
-- The top rows cascade into their finer rows (Move Speed into the four gait speeds, Zipline Speed into Base Speed); each stays editable afterwards.
+- The top rows cascade into their finer rows (Move Speed into the four gait speeds, Zipline Speed into Base Speed; Ramp Up, how fast you get up to zipline speed, is its own row); each stays editable afterwards.
 - Move Speed Cap and Floor are set directly, not multiplied.
 - Finer rows stay greyed until the stock values are read (load a save). The baseline is captured once and saved per save.
 - **Reset all movement attributes** clears everything.
