@@ -96,7 +96,7 @@ Better Weapons and Less Cost Grenade are modelled on pak mods Update 2 broke, by
 
 ### Movement
 
-<img src="images/movement.png" width="480" alt="Movement page with fly controls, presets and the Sonic Mode preset applied">
+<img src="images/movement.png" width="480" alt="Movement page with fly controls, presets and every tuning row, Move Speed expanded after the Sonic Mode preset">
 
 Fly mode (**No Clip**) puts the character in flight. **Space** rises and **Left** or **Right Ctrl** descends (not rebindable; ignored while the menu is open or the game is in the background).
 
@@ -106,9 +106,7 @@ Fly mode (**No Clip**) puts the character in flight. **Space** rises and **Left*
 
 #### Tuning rows and presets <sup>[✦](#msantoro12)</sup>
 
-<img src="images/movement-zipline.png" width="480" alt="Movement page scrolled to Stamina and Survival with Zipline Speed expanded">
-
-Each row defaults to 1.00x and an arrow opens finer rows behind it. Speed covers Move Speed, Acceleration, Cap, Floor and Sprint Speed. Jump & Dodge covers Jump Height, Double Jump Cost and Dodge Cost. Stamina & Survival covers Stamina Regen, Slide Stamina Regen, Zipline Speed and Fall Damage (0 removes it).
+Each row defaults to 1.00x and an arrow opens finer rows behind it (Move Speed is open in the shot). Speed covers Move Speed, Acceleration, Cap, Floor and Sprint Speed. Jump & Dodge covers Jump Height, Double Jump Cost and Dodge Cost. Stamina & Survival covers Stamina Regen, Slide Stamina Regen, Zipline Speed and Fall Damage (0 removes it).
 
 - The top rows cascade into their finer rows (Move Speed into the four gait speeds, Zipline Speed into Base Speed); each stays editable afterwards.
 - Move Speed Cap and Floor are set directly, not multiplied.
