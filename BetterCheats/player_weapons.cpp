@@ -161,52 +161,37 @@ namespace BetterCheats::Panels::Weapons
 		// what used to render the standard 10-row kAttrs table (Damage, Fire
 		// Rate, Recoil...) for a grenade, none of which mean anything for a
 		// thrown charge. These rows replace that table for any profile
-		// whose Profile::isGrenade is set. Charge Capacity is a GAS attribute on
-		// a DIFFERENT attribute set (character->GrenadeChargeAttributes, not
-		// WeaponAttributes), so they need their own member-pointer type rather
-		// than reusing WeaponAttr.
-		using GrenadeAttr = SDK::FGameplayAttributeData SDK::UCrGrenadeChargeAttributeSet::*;
-
+		// whose Profile::isGrenade is set.
 		struct GrenadeRowDef
 		{
 			const char* label;
 			const char* key;
-			GrenadeAttr member;   // unused for Damage and Charge Cost -- see the comments on those rows below
 			float       defaultValue, minValue, maxValue, step;
 			const char* format;
 			const char* tooltip;
 		};
 
-		enum GrenadeRowIndex : int { kGrenadeDamage = 0, kGrenadeCost, kGrenadeMax, kGrenadeRowCount };
+		enum GrenadeRowIndex : int { kGrenadeDamage = 0, kGrenadeCost, kGrenadeRowCount };
 
 		const GrenadeRowDef kGrenadeRows[kGrenadeRowCount] = {
-			// .member unused: Damage scales BaseDamage.Value on the equipped
-			// grenade TYPE's data asset, the same per-type-CDO shape as Charge Cost.
-			{ "Damage", "grenadeDamage", nullptr,
+			// Damage scales BaseDamage.Value on the equipped grenade TYPE's data
+			// asset, the same per-type-CDO shape as Charge Cost.
+			{ "Damage", "grenadeDamage",
 			  1.0f, 0.10f, 100.0f, 0.5f, "%.2fx",
 			  "Multiplies the grenade's base damage. Applies to this grenade type only." },
-			// .member unused: Charge Cost composes onto the equipped grenade
-			// TYPE's own data asset field (GrenadeThrowCostOfGrenadeCharge on
-			// UCrGrenadeWeaponItemDataBase, Chimera_classes.hpp:17303), not a GAS
-			// attribute on this set -- same per-type-CDO shape as Magazine Size's
-			// BaseMagazine, just a plain float instead of FScalableFloat.Value.
-			// See Tick()'s grenade block. Kept here only so this table's shape
-			// matches kAttrs' own "every row has a member pointer" convention.
-			{ "Charge Cost", "grenadeCost", nullptr,
+			// Charge Cost composes onto the equipped grenade TYPE's own data asset
+			// field (GrenadeThrowCostOfGrenadeCharge on UCrGrenadeWeaponItemDataBase,
+			// Chimera_classes.hpp:17303) -- same per-type-CDO shape as Magazine
+			// Size's BaseMagazine, just a plain float instead of FScalableFloat.Value.
+			// See Tick()'s grenade block.
+			{ "Charge Cost", "grenadeCost",
 			  1.0f, 0.00f, 2.00f, 0.05f, "%.2fx",
 			  "Multiplies how much of the charge bar one throw uses. 0.00x throws for free." },
-			// The saved key keeps its old name so existing values still load.
-			{ "Charge Capacity", "grenadeMax", &SDK::UCrGrenadeChargeAttributeSet::MaxGrenadeCharge,
-			  0.0f, 0.0f, 20.0f, 0.5f, "%.1f",
-			  "Size of the single charge bar (the game's is 1.0). A throw uses 1.0 of it by\n"
-			  "default, and the bar refills at the same speed, so a bigger bar takes longer\n"
-			  "to fill. Set directly rather than multiplied; 0 leaves the game's value." },
 		};
 
 		constexpr BetterCheats::ComposedAttribute::Mode kGrenadeModes[kGrenadeRowCount] = {
 			BetterCheats::ComposedAttribute::Mode::Multiply,  // Damage
 			BetterCheats::ComposedAttribute::Mode::Multiply,  // Charge Cost
-			BetterCheats::ComposedAttribute::Mode::Absolute,  // Charge Capacity
 		};
 
 		// Built-in grenade presets, same shape as the weapon kPresets above but
@@ -227,9 +212,8 @@ namespace BetterCheats::Panels::Weapons
 
 		const GrenadePreset kGrenadePresets[] = {
 			{ "Less Cost Grenade",
-			  "Halves how much of the charge bar one throw uses. Charge Capacity, Fuse, Blast\n"
-			  "Radius and Throw Force are untouched -- the pak this reproduces changes\n"
-			  "cost only.",
+			  "Halves how much of the charge bar one throw uses. Fuse, Blast Radius and\n"
+			  "Throw Force are untouched -- the pak this reproduces changes cost only.",
 			  "Modelled on 'Less Cost Grenade' (part of 'Better Grenade') by axbhub,\nNexusMod #41 for StarRupture",
 			  { {kGrenadeCost, 0.5f}, {-1,0} } },
 		};
@@ -243,7 +227,7 @@ namespace BetterCheats::Panels::Weapons
 		// that Server-SDK C++ struct -- offset-independent, so a layout
 		// mismatch can't silently read/write the wrong bytes.
 		//
-		// Unlike Charge Cost/Charge Capacity above, each of these three lives on
+		// Unlike Charge Cost above, each of these three lives on
 		// exactly ONE shared CDO for the whole game (one projectile class, one
 		// throw ability) -- not per grenade type -- so they're global controls
 		// applied every tick regardless of what's currently equipped, shown
@@ -865,7 +849,7 @@ namespace BetterCheats::Panels::Weapons
 		// Call once per tick. `attrs` is the player's grenade charge set (null if
 		// none) and `grenadeEquipped` says a grenade is the equipped weapon; arming
 		// needs both. A drop only counts as a throw if it is on the same attribute
-		// set as last tick (not a respawn or reload), Charge Capacity did not just
+		// set as last tick (not a respawn or reload), the max did not just
 		// change, and the charge is still below Max (not a clamp to a lowered Max).
 		// Call before anything tops CurrentGrenadeCharge back up.
 		void ProbeGrenadeThrow(SDK::UCrGrenadeChargeAttributeSet* attrs, bool grenadeEquipped, float deltaSeconds,
@@ -1106,12 +1090,11 @@ namespace BetterCheats::Panels::Weapons
 
 		// Grenade row readouts, parallel to g_dbgAttrGame/g_dbgAttrExpected
 		// above but indexed by GrenadeRowIndex instead of AttrIndex -- these rows
-		// aren't part of the per-gun kAttrs table (Charge Cost lives on a
-		// different CDO type; Charge Capacity lives on a different attribute set),
-		// so they get their own small parallel arrays instead of a slot in that
-		// one. `unmod` is the same "captured original while active, live read
-		// while not" value g_dbgWeaponBaseMagazine already computes for Magazine
-		// Size, feeding RenderLiveValue's always-on "Unmodified" tooltip line.
+		// aren't part of the per-gun kAttrs table (they live on a grenade data
+		// asset, a different CDO type), so they get their own small parallel
+		// arrays instead of a slot in that one. `unmod` is the same "captured
+		// original while active, live read while not" value g_dbgWeaponBaseMagazine
+		// already computes for Magazine Size, feeding RenderLiveValue's always-on "Unmodified" tooltip line.
 		// Only ever populated while a grenade profile is the one equipped -- see
 		// Tick()'s grenade block.
 		std::atomic<float> g_dbgGrenadeGame[kGrenadeRowCount];
@@ -1305,12 +1288,33 @@ namespace BetterCheats::Panels::Weapons
 		constexpr float kGrenadeBaseDamageFinalMax = 1000000.0f;
 		constexpr const char* kGrenadeBaseDamageKey = "playerWeapons.compose.grenadeBaseDamage";
 
-		// Charge Capacity: a GAS attribute on character->GrenadeChargeAttributes, ONE
-		// shared instance regardless of grenade type -- same "shared instance,
-		// respawn-only Forget" shape as g_composed[]/g_composedOwner above, not the
-		// per-type owner-swap-on-Release shape Magazine/Charge Cost need.
-		BetterCheats::ComposedAttribute    g_composedGrenadeMax;
-		SDK::UCrGrenadeChargeAttributeSet* g_grenadeAttrOwner = nullptr;
+		// Builds up to 0.21.0-gss.55 wrote the player's Max/Min grenade charge
+		// attributes. Those rows are gone; this undoes a write a previous plugin
+		// instance left behind in the game's own attribute set (the stored pair
+		// the compose code kept), once per attribute set per loaded session. The
+		// pointer is only compared, never dereferenced.
+		const SDK::UCrGrenadeChargeAttributeSet* g_legacyChargeCheckedSet = nullptr;
+		uint32_t                                 g_legacyChargeCheckedGeneration = 0;
+
+		void RestoreLegacyGrenadeChargeWrites(SDK::UCrGrenadeChargeAttributeSet* attrs)
+		{
+			const uint32_t generation = SessionConfig::Generation();
+			if (!attrs || generation == 0
+				|| (attrs == g_legacyChargeCheckedSet && generation == g_legacyChargeCheckedGeneration))
+				return;
+			g_legacyChargeCheckedSet        = attrs;
+			g_legacyChargeCheckedGeneration = generation;
+
+			const auto restore = [](const char* key, float& value)
+			{
+				if (!SessionConfig::Get(std::string(key) + ".stored", false))
+					return;
+				BetterCheats::RestoreIfStale(key, value);
+				BetterCheats::ClearComposeState(key);
+			};
+			restore("playerWeapons.compose.grenadeMax", attrs->MaxGrenadeCharge.CurrentValue);
+			restore("playerWeapons.compose.grenadeMin", attrs->MinGrenadeCharge.CurrentValue);
+		}
 
 		// Forgets every composed slot the moment the attribute set instance changes
 		// (respawn, world change) -- before anything below tries to Apply/Release
@@ -1335,9 +1339,6 @@ namespace BetterCheats::Panels::Weapons
 
 			g_composedGrenadeBaseDamage.Forget();
 			g_grenadeBaseDamageOwner.Reset();
-
-			g_composedGrenadeMax.Forget();
-			g_grenadeAttrOwner = nullptr;
 		}
 
 		// Unlike `weapons` (one shared instance regardless of what's equipped),
@@ -1426,17 +1427,6 @@ namespace BetterCheats::Panels::Weapons
 
 			try { ReleaseGrenadeBaseDamageNow(); }
 			catch (...) {}
-		}
-
-		// Charge Capacity is ONE instance across every grenade type (like
-		// WeaponAttributes does for guns), so a weapon SWITCH must Release, not
-		// Forget -- handled in Tick() via `active`. Forget only belongs
-		// here, on a genuine instance change (respawn, world change).
-		void ForgetGrenadeAttrsIfOwnerChanged(SDK::UCrGrenadeChargeAttributeSet* current)
-		{
-			if (current == g_grenadeAttrOwner) return;
-			g_composedGrenadeMax.Forget();
-			g_grenadeAttrOwner = current;
 		}
 
 		bool IsActive(int attr, float value)
@@ -1904,18 +1894,14 @@ namespace BetterCheats::Panels::Weapons
 			// Grenade rows. Charge Cost lives on the equipped grenade
 			// TYPE's own data asset (UCrGrenadeWeaponItemDataBase extends
 			// UCrWeaponItemDataBase, so LastEquippedWeaponData covers it too) --
-			// same per-type-CDO shape as BaseMagazine above. Charge Capacity is a GAS
-			// attribute on character->GrenadeChargeAttributes, ONE shared instance
-			// regardless of grenade type -- same "shared instance, active profile
-			// only" convention as WeaponAttributes above. Both, and Infinite
-			// Charges below, apply only while a grenade profile is the one
-			// currently equipped, matching every other per-weapon row in this
-			// file: switching to a gun or tool releases them exactly like
-			// switching weapons releases Damage/Fire Rate/etc.
+			// same per-type-CDO shape as BaseMagazine above. Both rows apply only while
+			// a grenade profile is the one currently equipped, matching every other
+			// per-weapon row in this file: switching to a gun or tool releases them
+			// exactly like switching weapons releases Damage/Fire Rate/etc.
 			//
 			// Spending the last charge takes the grenade out of the player's hand, so
 			// "equipped" alone would drop every grenade row at 0 charges -- exactly
-			// when Charge Capacity, Charge Cost and Infinite Charges are needed. When no
+			// when Charge Cost and Infinite Charges are needed. When no
 			// grenade is in hand the rows follow the grenade the weapon component
 			// reports, or failing that the last one seen.
 			SDK::UCrGrenadeWeaponItemDataBase* grenadeData =
@@ -1972,7 +1958,7 @@ namespace BetterCheats::Panels::Weapons
 			}
 
 			SDK::UCrGrenadeChargeAttributeSet* grenadeAttrs = character->GrenadeChargeAttributes;
-			ForgetGrenadeAttrsIfOwnerChanged(grenadeAttrs);
+			RestoreLegacyGrenadeChargeWrites(grenadeAttrs);
 
 			// Before the top-up below, so an Infinite Charges refill can't hide the drop.
 			ProbeGrenadeThrow(grenadeAttrs, grenadeData != nullptr, deltaSeconds,
@@ -1981,24 +1967,11 @@ namespace BetterCheats::Panels::Weapons
 
 			if (grenadeAttrs)
 			{
-				const GrenadeRowDef& def = kGrenadeRows[kGrenadeMax];
-				float& value = (grenadeAttrs->*def.member).CurrentValue;
-				const bool active = grenadeData && BetterCheats::DiffersFromDefault(grenadeProfile.grenadeValues[kGrenadeMax], def.defaultValue);
-				const std::string key = std::string("playerWeapons.compose.") + def.key;
-
-				const ComposeStep step = ApplyComposedRow(g_composedGrenadeMax, grenadeAttrs, value, key,
-					active, grenadeProfile.grenadeValues[kGrenadeMax], kGrenadeModes[kGrenadeMax], def.minValue, def.maxValue);
-
-				g_dbgGrenadeGame[kGrenadeMax].store(step.game);
-				g_dbgGrenadeExpected[kGrenadeMax].store(step.expected);
-				g_dbgGrenadeUnmod[kGrenadeMax].store(active ? g_composedGrenadeMax.GetGame() : step.game);
-
 				// Infinite Charges: tops CurrentGrenadeCharge up to Max when it
 				// drops, exactly like Infinite magazine tops SetEquippedWeaponCurrentAmmo
 				// below -- never an unconditional write every tick (which would
 				// fight a regen-style LEM/buff), only a top-up on the edge where
-				// it's short of whatever Max is currently honouring (the game's
-				// own, or our Charge Capacity override just above).
+				// it's short of the game's own Max.
 				//
 				// Not gated on a grenade being in hand: spending the last charge
 				// takes the grenade out of the player's hand, and the charge
@@ -2106,7 +2079,6 @@ namespace BetterCheats::Panels::Weapons
 			g_composedMagazine.Forget();
 			g_composedGrenadeCost.Forget();
 			g_composedGrenadeBaseDamage.Forget();
-			g_composedGrenadeMax.Forget();
 			for (int g = 0; g < kGrenadeGlobalCount; ++g)
 				g_composedGrenadeGlobal[g].Forget();
 			return;
@@ -2118,7 +2090,6 @@ namespace BetterCheats::Panels::Weapons
 		// just no-op the writes below anyway, but skip the SDK call entirely.
 		SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
 		SDK::UCrWeaponAttributeSet* weapons = character ? character->WeaponAttributes : nullptr;
-		SDK::UCrGrenadeChargeAttributeSet* grenadeAttrs = character ? character->GrenadeChargeAttributes : nullptr;
 
 		try
 		{
@@ -2158,16 +2129,6 @@ namespace BetterCheats::Panels::Weapons
 			}
 
 			ReleaseGrenadeBaseDamageNow();
-
-			if (grenadeAttrs && grenadeAttrs == g_grenadeAttrOwner)
-			{
-				g_composedGrenadeMax.Release(grenadeAttrs, grenadeAttrs->MaxGrenadeCharge.CurrentValue);
-				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeMax");
-			}
-			else
-			{
-				g_composedGrenadeMax.Forget();
-			}
 
 			// Fuse/Blast Radius/Throw Force: global CDOs, not tied to the local
 			// character at all, so no owner-swap check -- only whether the CDO
@@ -2566,10 +2527,9 @@ namespace BetterCheats::Panels::Weapons
 				if (imgui->Checkbox("Infinite charges", &profile.infiniteCharges))
 					SessionConfig::Set(ConfigKey(profile, "infiniteCharges", "enabled"), profile.infiniteCharges);
 				if (imgui->IsItemHovered())
-					imgui->SetTooltip("Refills your charge bar to its max the moment it drops,\n"
-					                  "using whatever the game (or your own Charge Capacity\n"
-					                  "override below) currently honours as the max. Same top-up\n"
-					                  "'Infinite magazine' uses for ammo, not a permanent override.");
+					imgui->SetTooltip("Refills your charge bar to full the moment it drops.\n"
+					                  "Same top-up 'Infinite magazine' uses for ammo, not a\n"
+					                  "permanent override.");
 
 				imgui->Spacing();
 
