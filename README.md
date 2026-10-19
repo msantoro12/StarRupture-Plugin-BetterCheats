@@ -207,7 +207,7 @@ Both keys can be rebound at runtime via the modloader's keybind settings, and th
 
 1. Download the latest release ZIP from the [Releases](../../releases) page: `BetterCheats_Plugin-Client-*.zip`
 
-2. Extract into your game's `Binaries\Win64\` folder. The ZIP contains a `Plugins\` folder -- it will sit alongside your existing `dwmapi.dll`.
+2. Extract into your game's `Binaries\Win64\ModLoader\` folder. The ZIP contains a `Plugins\` folder, so the DLL lands in `ModLoader\Plugins\`.
 
 3. Launch the game, then press **F10** (default) in-game to open the menu.
 
