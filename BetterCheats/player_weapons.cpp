@@ -563,7 +563,7 @@ namespace BetterCheats::Panels::Weapons
 		// them. Health is the Mass HP fragment the One-Hit Kill cheat writes, or
 		// the actor's GAS CurrentHealth where that is all there is.
 		// ---------------------------------------------------------------------
-		constexpr double kHitDamageRadius  = 900.0;   // BP_GrenadeProjectile_C DamageRadius
+		constexpr double kHitDamageRadius  = 900.0;   // BP_GrenadeProjectile_C DamageRadius, before the Blast Radius row
 		constexpr double kHitNearMargin    = 300.0;
 		constexpr float  kHitTailSeconds   = 1.5f;
 		constexpr float  kHitFindSeconds   = 2.0f;
@@ -580,6 +580,7 @@ namespace BetterCheats::Panels::Weapons
 			bool  hasMass = false, hasGas = false;
 			float massBefore = 0.0f, massLast = 0.0f;
 			float gasBefore  = 0.0f, gasLast  = 0.0f;
+			int   massMisses = 0; // consecutive ticks the Mass fragment could not be read
 			bool  gone = false;   // despawned, pooled or destroyed: counts as died
 		};
 
@@ -779,7 +780,17 @@ namespace BetterCheats::Panels::Weapons
 						ScanHitCandidates();
 					}
 
-					const double reach = kHitDamageRadius + kHitNearMargin;
+					// The live projectile's own radius, so the Blast Radius row is followed.
+					double radius = kHitDamageRadius;
+					{
+						IPluginHooks* hooks = GetHooks();
+						IPluginObjectProperties* props = hooks ? hooks->ObjectProperties : nullptr;
+						const CdoFieldHandle& rh = g_grenadeGlobalHandle[kGrenadeRadius];
+						double raw = 0.0;
+						if (props && rh.ok && projectile && props->GetFloatProperty(projectile, rh.property, &raw) && raw > 0.0)
+							radius = raw;
+					}
+					const double reach = radius + kHitNearMargin;
 					for (const ObjectRef<SDK::AActor>& ref : g_hitCandidates)
 					{
 						if (g_hitTracked.size() >= kHitMaxTracked)
@@ -828,7 +839,10 @@ namespace BetterCheats::Panels::Weapons
 					bool hasMass, hasGas;
 					float mass = 0.0f, gas = 0.0f;
 					SampleHitHealth(actor, hasMass, mass, hasGas, gas);
-					if (hasMass && e.hasMass) e.massLast = mass;
+					// The Mass entity goes before the puppet does, so a fragment that
+					// stays unreadable means the enemy died.
+					if (hasMass && e.hasMass) { e.massLast = mass; e.massMisses = 0; }
+					else if (e.hasMass && ++e.massMisses >= 3) e.gone = true;
 					if (hasGas  && e.hasGas)  e.gasLast  = gas;
 				}
 			}
@@ -1274,10 +1288,9 @@ namespace BetterCheats::Panels::Weapons
 		BetterCheats::ComposedAttribute    g_composedGrenadeCost;
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeCostOwner;
 
-		// The last grenade the grenade rows applied to, and its tab, so they keep
-		// following it once the grenade leaves the player's hand (see Tick()).
+		// The last grenade the grenade rows applied to, so they keep following it
+		// once the grenade leaves the player's hand (see Tick()).
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_lastGrenadeData;
-		int                                          g_lastGrenadeProfile = -1;
 
 		// Grenade damage-source test (see the GrenadeDamageProbe log lines): scales
 		// BaseDamage.Value on the equipped grenade's data asset so a throw at 1x vs
@@ -1738,11 +1751,10 @@ namespace BetterCheats::Panels::Weapons
 		// Tab presence for whatever grenade is currently equipped, independent of the
 		// active-profile selection below -- see GetEquippedGrenadeItemData.
 		SDK::UCrGrenadeWeaponItemDataBase* slotGrenade = GetEquippedGrenadeItemData(character->WeaponSystem);
-		int slotGrenadeProfile = -1;
 		if (slotGrenade)
 		{
 			std::lock_guard<std::mutex> lock(g_profilesMutex);
-			slotGrenadeProfile = FindOrCreateProfile(slotGrenade->GetName(), true);
+			FindOrCreateProfile(slotGrenade->GetName(), true);
 		}
 
 		if (SDK::UCrWeaponItemDataBase* data = character->WeaponSystem->LastEquippedWeaponData)
@@ -1921,16 +1933,13 @@ namespace BetterCheats::Panels::Weapons
 					grenadeProfile = profile;
 				else
 				{
+					// By name every tick: g_profiles is rebuilt on a config load, so a
+					// cached index could point at another weapon.
 					std::lock_guard<std::mutex> lock(g_profilesMutex);
-					if (slotGrenadeProfile >= 0 && grenadeData == slotGrenade)
-						g_lastGrenadeProfile = slotGrenadeProfile;
-					else if (g_lastGrenadeProfile < 0)
-						g_lastGrenadeProfile = FindOrCreateProfile(grenadeData->GetName(), true);
-					if (g_lastGrenadeProfile >= 0 && g_lastGrenadeProfile < static_cast<int>(g_profiles.size()))
-						grenadeProfile = g_profiles[g_lastGrenadeProfile];
+					const int index = FindOrCreateProfile(grenadeData->GetName(), true);
+					if (index >= 0 && index < static_cast<int>(g_profiles.size()))
+						grenadeProfile = g_profiles[index];
 				}
-				if (profile.isGrenade)
-					g_lastGrenadeProfile = activeIndex;
 			}
 			ReleaseGrenadeCostIfOwnerChanged(grenadeData);
 			ReleaseGrenadeBaseDamageIfOwnerChanged(grenadeData);
