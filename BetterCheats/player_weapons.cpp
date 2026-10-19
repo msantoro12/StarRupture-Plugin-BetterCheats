@@ -171,7 +171,7 @@ namespace BetterCheats::Panels::Weapons
 		{
 			const char* label;
 			const char* key;
-			GrenadeAttr member;   // unused for Charge Cost -- see the comment on that row below
+			GrenadeAttr member;   // unused for Damage and Charge Cost -- see the comments on those rows below
 			float       defaultValue, minValue, maxValue, step;
 			const char* format;
 			const char* tooltip;
@@ -1301,12 +1301,6 @@ namespace BetterCheats::Panels::Weapons
 		// Grenade Damage row: scales BaseDamage.Value on the grenade TYPE's data
 		// asset (the explosion reads it -- see the GrenadeDamageProbe log lines).
 		// Same per-type-CDO shape as Charge Cost above.
-		float              g_grenadeBaseDamageScaleLogged = 1.0f;
-		// The write is read back on the tick after it is logged (before the row
-		// writes again), so the log shows whether the game overwrote it.
-		bool               g_grenadeBaseDamageReadbackPending  = false;
-		float              g_grenadeBaseDamageReadbackExpected = 0.0f;
-		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeBaseDamageReadbackOwner;
 		BetterCheats::ComposedAttribute g_composedGrenadeBaseDamage;
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeBaseDamageOwner;
 		constexpr float kGrenadeBaseDamageFinalMax = 1000000.0f;
@@ -1953,18 +1947,6 @@ namespace BetterCheats::Panels::Weapons
 			ReleaseGrenadeCostIfOwnerChanged(grenadeData);
 			ReleaseGrenadeBaseDamageIfOwnerChanged(grenadeData);
 
-			if (g_grenadeBaseDamageReadbackPending)
-			{
-				g_grenadeBaseDamageReadbackPending = false;
-				if (grenadeData && g_grenadeBaseDamageReadbackOwner.Get() == grenadeData)
-				{
-					std::string dataName = "<unreadable>";
-					try { dataName = grenadeData->GetName(); } catch (...) {}
-					LOG_INFO("GrenadeDamageProbe: '%s' BaseDamage.Value one tick later live=%.4f expected=%.4f",
-						dataName.c_str(), grenadeData->BaseDamage.Value, g_grenadeBaseDamageReadbackExpected);
-				}
-			}
-
 			if (grenadeData)
 			{
 				// Final clamp is not the slider range: it bounds the written BaseDamage,
@@ -1979,18 +1961,6 @@ namespace BetterCheats::Panels::Weapons
 				g_dbgGrenadeGame[kGrenadeDamage].store(damageStep.game);
 				g_dbgGrenadeExpected[kGrenadeDamage].store(damageStep.expected);
 				g_dbgGrenadeUnmod[kGrenadeDamage].store(damageActive ? g_composedGrenadeBaseDamage.GetGame() : damageStep.game);
-
-				if (damageScale != g_grenadeBaseDamageScaleLogged)
-				{
-					g_grenadeBaseDamageScaleLogged = damageScale;
-					std::string dataName = "<unreadable>";
-					try { dataName = grenadeData->GetName(); } catch (...) {}
-					LOG_INFO("GrenadeDamageProbe: '%s' BaseDamage.Value game=%.4f expected=%.4f (scale x%.2f), live value follows next tick",
-						dataName.c_str(), damageStep.game, damageStep.expected, damageScale);
-					g_grenadeBaseDamageReadbackOwner.Set(grenadeData);
-					g_grenadeBaseDamageReadbackExpected = damageStep.expected;
-					g_grenadeBaseDamageReadbackPending  = true;
-				}
 
 				const bool active = BetterCheats::DiffersFromDefault(
 					grenadeProfile.grenadeValues[kGrenadeCost], kGrenadeRows[kGrenadeCost].defaultValue);
@@ -2472,7 +2442,7 @@ namespace BetterCheats::Panels::Weapons
 				// none of Damage/Fire Rate/Recoil/Spread/etc. mean anything for a
 				// thrown charge, and neither do the gun presets above (they index
 				// into kAttrs by attribute, all meaningless here).
-				imgui->TextDisabled("Damage, cost and charges are per grenade type. Fuse, blast radius and\n"
+				imgui->TextDisabled("Damage and charge cost are per grenade type. Fuse, blast radius and\n"
 				                    "throw force are below.");
 
 				// A preset writes only into THIS grenade profile's rows, same as the
