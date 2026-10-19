@@ -1,0 +1,5 @@
+Build Windows Anywhere toggle in the Building tab
+Build Benches Anywhere toggle in the Building tab
+Deconstruct Windows During Waves toggle in the Building tab
+BETTER CHEATS row added to the pause menu
+Building descriptions now sit under their titles, and presets are gone
