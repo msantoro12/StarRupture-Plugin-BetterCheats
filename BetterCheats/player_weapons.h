@@ -6,7 +6,8 @@ namespace BetterCheats::Panels::Weapons
 {
 	void RenderImGui(IModLoaderImGui* imgui);
 
-	// Registers the bc_grenadedmg console command -- call once during plugin init.
+	// Registers the world-end callback that hands the grenade Damage row's
+	// BaseDamage back to the game -- call once during plugin init.
 	void Initialize();
 
 	// Re-applies enabled weapon attribute overrides every engine tick. There is
@@ -20,7 +21,7 @@ namespace BetterCheats::Panels::Weapons
 	// SessionConfig::Reload(), e.g. from OnExperienceLoadComplete.
 	void ApplySavedConfig();
 
-	// Unregisters the console command and hands every composed attribute back to
+	// Unregisters the world-end callback and hands every composed attribute back to
 	// the game if the owning character is still valid -- call once from
 	// PluginShutdown.
 	void Shutdown();

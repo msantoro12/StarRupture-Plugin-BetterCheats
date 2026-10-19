@@ -160,7 +160,7 @@ namespace BetterCheats::Panels::Weapons
 		// LastEquippedWeaponData/profile-discovery path as every gun -- this is
 		// what used to render the standard 10-row kAttrs table (Damage, Fire
 		// Rate, Recoil...) for a grenade, none of which mean anything for a
-		// thrown charge. These three rows replace that table for any profile
+		// thrown charge. These rows replace that table for any profile
 		// whose Profile::isGrenade is set. Max/Min Charge are GAS attributes on
 		// a DIFFERENT attribute set (character->GrenadeChargeAttributes, not
 		// WeaponAttributes), so they need their own member-pointer type rather
@@ -177,9 +177,14 @@ namespace BetterCheats::Panels::Weapons
 			const char* tooltip;
 		};
 
-		enum GrenadeRowIndex : int { kGrenadeCost = 0, kGrenadeMax, kGrenadeMin, kGrenadeRowCount };
+		enum GrenadeRowIndex : int { kGrenadeDamage = 0, kGrenadeCost, kGrenadeMax, kGrenadeMin, kGrenadeRowCount };
 
 		const GrenadeRowDef kGrenadeRows[kGrenadeRowCount] = {
+			// .member unused: Damage scales BaseDamage.Value on the equipped
+			// grenade TYPE's data asset, the same per-type-CDO shape as Charge Cost.
+			{ "Damage", "grenadeDamage", nullptr,
+			  1.0f, 0.10f, 100.0f, 0.5f, "%.2fx",
+			  "Multiplies the grenade's base damage. Applies to this grenade type only." },
 			// .member unused: Charge Cost composes onto the equipped grenade
 			// TYPE's own data asset field (GrenadeThrowCostOfGrenadeCharge on
 			// UCrGrenadeWeaponItemDataBase, Chimera_classes.hpp:17303), not a GAS
@@ -199,6 +204,7 @@ namespace BetterCheats::Panels::Weapons
 		};
 
 		constexpr BetterCheats::ComposedAttribute::Mode kGrenadeModes[kGrenadeRowCount] = {
+			BetterCheats::ComposedAttribute::Mode::Multiply,  // Damage
 			BetterCheats::ComposedAttribute::Mode::Multiply,  // Charge Cost
 			BetterCheats::ComposedAttribute::Mode::Absolute,  // Max Charges
 			BetterCheats::ComposedAttribute::Mode::Absolute,  // Min Charge
@@ -206,7 +212,7 @@ namespace BetterCheats::Panels::Weapons
 
 		// Built-in grenade presets, same shape as the weapon kPresets above but
 		// indexing into kGrenadeRows instead of kAttrs. Entries end at row < 0.
-		// Only Charge Cost/Max Charges/Min Charge are reachable here -- Fuse,
+		// Only the per-profile rows above are reachable here -- Fuse,
 		// Blast Radius and Throw Force (kGrenadeGlobals) are one shared CDO for
 		// every grenade type, not part of this per-profile table, so a preset
 		// can't set them the same way it sets a profile's own rows.
@@ -553,7 +559,7 @@ namespace BetterCheats::Panels::Weapons
 
 		// ---------------------------------------------------------------------
 		// Hit tracker: how much health enemies lose to one grenade, so the
-		// BaseDamage scale (bc_grenadedmg) can be compared in game. Armed by every
+		// BaseDamage scale (Grenade Damage row) can be compared in game. Armed by every
 		// detected throw (not only the first), log-only, one window at a time.
 		// It follows the thrown projectile each tick, tracks enemies inside
 		// DamageRadius plus a margin of it, and once the projectile is gone plus a
@@ -1292,11 +1298,9 @@ namespace BetterCheats::Panels::Weapons
 		// once the grenade leaves the player's hand (see Tick()).
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_lastGrenadeData;
 
-		// Grenade damage-source test (see the GrenadeDamageProbe log lines): scales
-		// BaseDamage.Value on the equipped grenade's data asset so a throw at 1x vs
-		// the scaled value shows whether the explosion reads it. Set through the
-		// bc_grenadedmg console command, applied on the tick. 1 = no change.
-		std::atomic<float> g_grenadeBaseDamageScale{1.0f};
+		// Grenade Damage row: scales BaseDamage.Value on the grenade TYPE's data
+		// asset (the explosion reads it -- see the GrenadeDamageProbe log lines).
+		// Same per-type-CDO shape as Charge Cost above.
 		float              g_grenadeBaseDamageScaleLogged = 1.0f;
 		// The write is read back on the tick after it is logged (before the row
 		// writes again), so the log shows whether the game overwrote it.
@@ -1305,11 +1309,8 @@ namespace BetterCheats::Panels::Weapons
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeBaseDamageReadbackOwner;
 		BetterCheats::ComposedAttribute g_composedGrenadeBaseDamage;
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeBaseDamageOwner;
-		constexpr float kGrenadeBaseDamageScaleMax = 100.0f;
 		constexpr float kGrenadeBaseDamageFinalMax = 1000000.0f;
 		constexpr const char* kGrenadeBaseDamageKey = "playerWeapons.compose.grenadeBaseDamage";
-		constexpr const char* kGrenadeBaseDamageCommand = "bc_grenadedmg";
-		bool g_grenadeBaseDamageCommandRegistered = false;
 
 		// Max/Min Charge: GAS attributes on character->GrenadeChargeAttributes, ONE
 		// shared instance regardless of grenade type -- same "shared instance,
@@ -1392,7 +1393,7 @@ namespace BetterCheats::Panels::Weapons
 				"playerWeapons.compose.grenadeCost");
 		}
 
-		// Same per-grenade-TYPE shape for the damage-source test above.
+		// Same per-grenade-TYPE shape for the Damage row above.
 		void ReleaseGrenadeBaseDamageIfOwnerChanged(SDK::UCrGrenadeWeaponItemDataBase* current)
 		{
 			ReleaseComposedIfOwnerChanged(g_composedGrenadeBaseDamage, g_grenadeBaseDamageOwner, current,
@@ -1400,31 +1401,39 @@ namespace BetterCheats::Panels::Weapons
 				kGrenadeBaseDamageKey);
 		}
 
-		// "bc_grenadedmg [scale]" -- no argument prints the current scale. gameThread
-		// = true, so this runs on the tick; it only stores the atomic the tick reads.
-		void HandleGrenadeBaseDamage(const char* const* argv, int argc, PluginConsoleSink sink, void* userData)
+		// Hands the stock BaseDamage back. The grenade data asset is shared by every
+		// holder of that grenade type and outlives the world, so a scaled value left
+		// in it would carry into the next session. Game thread only.
+		void ReleaseGrenadeBaseDamageNow()
 		{
-			IPluginSelf* self = static_cast<IPluginSelf*>(userData);
-			if (!self || !self->hooks || !self->hooks->Console) return;
-
-			IPluginConsole* console = self->hooks->Console;
-
-			if (argc >= 2)
+			if (SDK::UCrGrenadeWeaponItemDataBase* owner = g_grenadeBaseDamageOwner.Get())
 			{
-				char* end = nullptr;
-				const float requested = strtof(argv[1], &end);
-				if (end == argv[1] || *end != '\0' || !(requested >= 0.0f) || requested > kGrenadeBaseDamageScaleMax)
-				{
-					console->Printf(sink, PluginConsoleLineKind::Error,
-						"Scale must be a number from 0 to %.0f.", kGrenadeBaseDamageScaleMax);
-					return;
-				}
-				g_grenadeBaseDamageScale.store(requested);
+				g_composedGrenadeBaseDamage.Release(owner, owner->BaseDamage.Value);
+				BetterCheats::ClearComposeState(kGrenadeBaseDamageKey);
+			}
+			else
+			{
+				g_composedGrenadeBaseDamage.Forget();
+			}
+		}
+
+		constexpr const char* kChimeraMainWorldName = "ChimeraMain";
+
+		void OnBeforeWorldEndPlay(SDK::UWorld* /*world*/, const char* worldName)
+		{
+			if (!worldName || std::strcmp(worldName, kChimeraMainWorldName) != 0)
+				return;
+
+			// Off the game thread there is nothing safe to write; SessionConfig keeps
+			// the pair RestoreIfStale needs to undo the leftover on the next activation.
+			if (!BetterCheats::IsGameThread())
+			{
+				g_composedGrenadeBaseDamage.Forget();
+				return;
 			}
 
-			console->Printf(sink, PluginConsoleLineKind::Output,
-				"Grenade BaseDamage scale: x%.2f (1 = untouched). Equip a grenade for it to apply.",
-				g_grenadeBaseDamageScale.load());
+			try { ReleaseGrenadeBaseDamageNow(); }
+			catch (...) {}
 		}
 
 		// Max/Min Charge share ONE instance across every grenade type (like
@@ -1958,11 +1967,18 @@ namespace BetterCheats::Panels::Weapons
 
 			if (grenadeData)
 			{
-				const float damageScale = g_grenadeBaseDamageScale.load();
+				// Final clamp is not the slider range: it bounds the written BaseDamage,
+				// which has its own real-world magnitude.
+				const float damageScale = grenadeProfile.grenadeValues[kGrenadeDamage];
+				const bool  damageActive = BetterCheats::DiffersFromDefault(damageScale, kGrenadeRows[kGrenadeDamage].defaultValue);
 				const ComposeStep damageStep = ApplyComposedRow(g_composedGrenadeBaseDamage, grenadeData,
 					grenadeData->BaseDamage.Value, kGrenadeBaseDamageKey,
-					BetterCheats::DiffersFromDefault(damageScale, 1.0f), damageScale,
-					BetterCheats::ComposedAttribute::Mode::Multiply, 0.0f, kGrenadeBaseDamageFinalMax);
+					damageActive, damageScale,
+					kGrenadeModes[kGrenadeDamage], 0.0f, kGrenadeBaseDamageFinalMax);
+
+				g_dbgGrenadeGame[kGrenadeDamage].store(damageStep.game);
+				g_dbgGrenadeExpected[kGrenadeDamage].store(damageStep.expected);
+				g_dbgGrenadeUnmod[kGrenadeDamage].store(damageActive ? g_composedGrenadeBaseDamage.GetGame() : damageStep.game);
 
 				if (damageScale != g_grenadeBaseDamageScaleLogged)
 				{
@@ -1993,7 +2009,8 @@ namespace BetterCheats::Panels::Weapons
 
 			// Before the top-up below, so an Infinite Charges refill can't hide the drop.
 			ProbeGrenadeThrow(grenadeAttrs, grenadeData != nullptr, deltaSeconds,
-				g_grenadeBaseDamageScale.load(), grenadeData ? grenadeData->BaseDamage.Value : 0.0f);
+				grenadeData ? grenadeProfile.grenadeValues[kGrenadeDamage] : 1.0f,
+				grenadeData ? grenadeData->BaseDamage.Value : 0.0f);
 
 			if (grenadeAttrs)
 			{
@@ -2105,32 +2122,14 @@ namespace BetterCheats::Panels::Weapons
 
 	void Initialize()
 	{
-		IPluginSelf* self = GetSelf();
-		if (!self || !self->hooks || !self->hooks->Console)
-		{
-			LOG_WARN("Weapons: console unavailable, '%s' not registered.", kGrenadeBaseDamageCommand);
-			return;
-		}
-
-		PluginConsoleCommandDesc desc{};
-		desc.name       = kGrenadeBaseDamageCommand;
-		desc.usage      = "bc_grenadedmg [scale]";
-		desc.help       = "Scale the equipped grenade's BaseDamage to test whether its explosion reads it (1 = off).";
-		desc.handler    = &HandleGrenadeBaseDamage;
-		desc.userData   = self;
-		desc.gameThread = true;
-
-		g_grenadeBaseDamageCommandRegistered = self->hooks->Console->RegisterCommand(self, &desc);
-		if (!g_grenadeBaseDamageCommandRegistered)
-			LOG_WARN("Weapons: console command '%s' is already taken.", kGrenadeBaseDamageCommand);
+		if (IPluginSelf* self = GetSelf())
+			self->hooks->World->RegisterOnBeforeWorldEndPlay(&OnBeforeWorldEndPlay);
 	}
 
 	void Shutdown()
 	{
-		IPluginSelf* self = GetSelf();
-		if (g_grenadeBaseDamageCommandRegistered && self && self->hooks && self->hooks->Console)
-			self->hooks->Console->UnregisterCommand(self, kGrenadeBaseDamageCommand);
-		g_grenadeBaseDamageCommandRegistered = false;
+		if (IPluginSelf* self = GetSelf())
+			self->hooks->World->UnregisterOnBeforeWorldEndPlay(&OnBeforeWorldEndPlay);
 
 		// The loader's own RELOAD button runs PluginShutdown from its D3D Present
 		// hook, not the game thread Tick() recorded -- GetLocalCharacter() and
@@ -2196,15 +2195,7 @@ namespace BetterCheats::Panels::Weapons
 				g_composedGrenadeCost.Forget();
 			}
 
-			if (SDK::UCrGrenadeWeaponItemDataBase* owner = g_grenadeBaseDamageOwner.Get())
-			{
-				g_composedGrenadeBaseDamage.Release(owner, owner->BaseDamage.Value);
-				BetterCheats::ClearComposeState(kGrenadeBaseDamageKey);
-			}
-			else
-			{
-				g_composedGrenadeBaseDamage.Forget();
-			}
+			ReleaseGrenadeBaseDamageNow();
 
 			if (grenadeAttrs && grenadeAttrs == g_grenadeAttrOwner)
 			{
@@ -2481,9 +2472,8 @@ namespace BetterCheats::Panels::Weapons
 				// none of Damage/Fire Rate/Recoil/Spread/etc. mean anything for a
 				// thrown charge, and neither do the gun presets above (they index
 				// into kAttrs by attribute, all meaningless here).
-				imgui->TextDisabled("Damage isn't changeable yet -- its GameplayEffect modifier setup\n"
-				                    "isn't confirmed safe to write blind. Fuse, blast radius and throw\n"
-				                    "force are below.");
+				imgui->TextDisabled("Damage, cost and charges are per grenade type. Fuse, blast radius and\n"
+				                    "throw force are below.");
 
 				// A preset writes only into THIS grenade profile's rows, same as the
 				// weapon presets above do for kAttrs.
