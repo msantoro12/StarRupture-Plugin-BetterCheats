@@ -488,6 +488,35 @@ namespace BetterCheats::Panels::Enemies
 		g_snapshot.count = static_cast<int>(g_enemies.size());
 	}
 
+	void PrepareHealthReads(float deltaSeconds)
+	{
+		static float cooldown = 0.0f;
+		cooldown -= deltaSeconds;
+		if (g_entitySubsystem.Get() && g_actorSubsystem.Get())
+			return;
+		if (cooldown > 0.0f)
+			return;
+		cooldown = 1.0f;
+		try { RescanMassSubsystems(); }
+		catch (...) { LOG_WARN("Enemies: exception resolving Mass subsystems."); }
+	}
+
+	bool TryReadMassHealth(SDK::AActor* actor, float& hp)
+	{
+		if (!actor || !actor->IsA(SDK::AMassEnemyCharacterBase::StaticClass()))
+			return false;
+		try
+		{
+			const FMassEnemyHealthFragmentView* fragment =
+				ResolveHealthFragment(static_cast<SDK::AMassEnemyCharacterBase*>(actor));
+			if (!fragment)
+				return false;
+			hp = fragment->HP;
+			return true;
+		}
+		catch (...) { return false; }
+	}
+
 	void ApplySavedConfig()
 	{
 		if (!SessionConfig::IsLoaded())

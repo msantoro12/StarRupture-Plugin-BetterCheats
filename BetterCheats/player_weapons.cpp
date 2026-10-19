@@ -9,8 +9,10 @@
 #include "game_thread.h"
 #include "object_ref.h"
 #include "cdo_lookup.h"
+#include "enemies.h"
 
 #include "Chimera_classes.hpp"
+#include "MassAIPrototypeEnemyRuntime_classes.hpp"
 #include "Chimera_parameters.hpp"
 
 #include <algorithm>
@@ -21,6 +23,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace BetterCheats::Panels::Weapons
@@ -548,16 +551,311 @@ namespace BetterCheats::Panels::Weapons
 			return newest;
 		}
 
+		// ---------------------------------------------------------------------
+		// Hit tracker: how much health enemies lose to one grenade, so the
+		// BaseDamage scale (bc_grenadedmg) can be compared in game. Armed by every
+		// detected throw (not only the first), log-only, one window at a time.
+		// It follows the thrown projectile each tick, tracks enemies inside
+		// DamageRadius plus a margin of it, and once the projectile is gone plus a
+		// short tail writes one line per enemy and a summary.
+		// Game thread (Tick) only. Projectile and enemies are ObjectRefs between
+		// ticks; positions and health are read within the tick that validated
+		// them. Health is the Mass HP fragment the One-Hit Kill cheat writes, or
+		// the actor's GAS CurrentHealth where that is all there is.
+		// ---------------------------------------------------------------------
+		constexpr double kHitDamageRadius  = 900.0;   // BP_GrenadeProjectile_C DamageRadius
+		constexpr double kHitNearMargin    = 300.0;
+		constexpr float  kHitTailSeconds   = 1.5f;
+		constexpr float  kHitFindSeconds   = 2.0f;
+		constexpr float  kHitFindInterval  = 0.1f;
+		constexpr float  kHitScanInterval  = 0.5f;    // GObjects walk for candidate enemies
+		constexpr float  kHitMaxSeconds    = 20.0f;
+		constexpr size_t kHitMaxTracked    = 20;
+		constexpr size_t kHitMaxCandidates = 512;
+
+		struct HitTracked
+		{
+			ObjectRef<SDK::AActor> actor;
+			std::string name;
+			bool  hasMass = false, hasGas = false;
+			float massBefore = 0.0f, massLast = 0.0f;
+			float gasBefore  = 0.0f, gasLast  = 0.0f;
+			bool  gone = false;   // despawned, pooled or destroyed: counts as died
+		};
+
+		bool                                   g_hitActive        = false;
+		bool                                   g_hitSeen          = false;
+		bool                                   g_hitGone          = false;
+		bool                                   g_hitHavePos       = false;
+		float                                  g_hitElapsed       = 0.0f;
+		float                                  g_hitFindCooldown  = 0.0f;
+		float                                  g_hitScanCooldown  = 0.0f;
+		float                                  g_hitTail          = 0.0f;
+		float                                  g_hitScale         = 1.0f;
+		float                                  g_hitBaseDamage    = 0.0f;
+		int                                    g_hitUnreadable    = 0;
+		double                                 g_hitPos[3]        = {};
+		ObjectRef<SDK::UObject>                g_hitProjectile;
+		std::vector<HitTracked>                g_hitTracked;
+		std::vector<ObjectRef<SDK::AActor>>    g_hitCandidates;
+		std::unordered_map<const SDK::UClass*, bool> g_hitAiClass;
+
+		void ResetHitTracker()
+		{
+			g_hitActive = g_hitSeen = g_hitGone = g_hitHavePos = false;
+			g_hitProjectile.Reset();
+			g_hitTracked.clear();
+			g_hitCandidates.clear();
+			g_hitAiClass.clear();
+		}
+
+		void ScanHitCandidates()
+		{
+			g_hitCandidates.clear();
+			SDK::TUObjectArray* arr = SDK::UObject::GObjects.GetTypedPtr();
+			SDK::UClass* aiClass = SDK::ACrAIBase::StaticClass();
+			if (!arr || !aiClass)
+				return;
+
+			constexpr uint32_t kSkipFlags =
+				static_cast<uint32_t>(SDK::EObjectFlags::ClassDefaultObject) |
+				static_cast<uint32_t>(SDK::EObjectFlags::BeginDestroyed) |
+				static_cast<uint32_t>(SDK::EObjectFlags::FinishDestroyed) |
+				static_cast<uint32_t>(SDK::EObjectFlags::MirroredGarbage);
+
+			const SDK::UClass* lastClass = nullptr;
+			bool lastIsAi = false;
+			for (int i = 0; i < arr->Num() && g_hitCandidates.size() < kHitMaxCandidates; ++i)
+			{
+				SDK::UObject* obj = arr->GetByIndex(i);
+				if (!obj || !obj->Class)
+					continue;
+				if (obj->Class != lastClass)
+				{
+					auto it = g_hitAiClass.find(obj->Class);
+					if (it == g_hitAiClass.end())
+						it = g_hitAiClass.emplace(obj->Class, obj->IsA(aiClass)).first;
+					lastClass = obj->Class;
+					lastIsAi  = it->second;
+				}
+				if (!lastIsAi || (static_cast<uint32_t>(obj->Flags) & kSkipFlags))
+					continue;
+				g_hitCandidates.emplace_back(static_cast<SDK::AActor*>(obj));
+			}
+		}
+
+		// False for a pooled Mass enemy or one being destroyed: not a live world actor.
+		bool HitActorLive(SDK::AActor* actor)
+		{
+			if (actor->bActorIsBeingDestroyed)
+				return false;
+			static SDK::UClass* massClass = SDK::AMassEnemyCharacterBase::StaticClass();
+			if (massClass && actor->IsA(massClass) && static_cast<SDK::AMassEnemyCharacterBase*>(actor)->bIsInPool)
+				return false;
+			return true;
+		}
+
+		void SampleHitHealth(SDK::AActor* actor, bool& hasMass, float& mass, bool& hasGas, float& gas)
+		{
+			hasMass = BetterCheats::Panels::Enemies::TryReadMassHealth(actor, mass);
+			hasGas  = false;
+			SDK::UCrAIBaseAttributeSet* attrs = static_cast<SDK::ACrAIBase*>(actor)->BaseAttributes;
+			if (attrs)
+			{
+				gas    = attrs->CurrentHealth.CurrentValue;
+				hasGas = true;
+			}
+		}
+
+		void FinishHitTracker()
+		{
+			int hit = 0;
+			float total = 0.0f;
+			for (const HitTracked& e : g_hitTracked)
+			{
+				const float massLost = e.massBefore - e.massLast;
+				const float gasLost  = e.gasBefore  - e.gasLast;
+				// The source that moved wins; Mass HP when neither did.
+				const bool useGas = !e.hasMass || (e.hasGas && massLost <= 0.0f && gasLost > 0.0f);
+				const float before = useGas ? e.gasBefore : e.massBefore;
+				const float after  = useGas ? e.gasLast   : e.massLast;
+				const float lost   = before - after;
+				const bool  died   = e.gone || after <= 0.0f;
+				if (lost > 0.0f)
+				{
+					++hit;
+					total += lost;
+				}
+				LOG_INFO("GrenadeDamageProbe: hit '%s' health %.1f -> %.1f (lost %.1f, %s), grenade scale x%.2f, BaseDamage %.2f",
+					e.name.c_str(), before, after, lost, died ? "died" : "alive", g_hitScale, g_hitBaseDamage);
+			}
+			LOG_INFO("GrenadeDamageProbe: summary: %d of %d tracked enem%s hit, total damage %.1f, grenade scale x%.2f, BaseDamage %.2f%s",
+				hit, static_cast<int>(g_hitTracked.size()), g_hitTracked.size() == 1 ? "y" : "ies", total, g_hitScale, g_hitBaseDamage,
+				g_hitUnreadable > 0 ? " (some enemies had no readable health)" : "");
+			ResetHitTracker();
+		}
+
+		void StartHitTracker(float scale, float baseDamage)
+		{
+			if (g_hitActive)
+				return;   // one window at a time
+			ResetHitTracker();
+			g_hitActive       = true;
+			g_hitScale        = scale;
+			g_hitBaseDamage   = baseDamage;
+			g_hitElapsed      = 0.0f;
+			g_hitFindCooldown = 0.0f;
+			g_hitScanCooldown = 0.0f;
+			g_hitTail         = 0.0f;
+			g_hitUnreadable   = 0;
+			LOG_INFO("GrenadeDamageProbe: throw detected, tracking enemies near the grenade (scale x%.2f, BaseDamage %.2f).",
+				scale, baseDamage);
+		}
+
+		void TickHitTracker(float deltaSeconds)
+		{
+			if (!g_hitActive)
+				return;
+			g_hitElapsed += deltaSeconds;
+
+			try
+			{
+				BetterCheats::Panels::Enemies::PrepareHealthReads(deltaSeconds);
+
+				SDK::UObject* projectile = g_hitProjectile.Get();
+				if (projectile && static_cast<SDK::AActor*>(projectile)->bActorIsBeingDestroyed)
+					projectile = nullptr;
+
+				if (!g_hitSeen)
+				{
+					g_hitFindCooldown -= deltaSeconds;
+					if (g_hitFindCooldown <= 0.0f)
+					{
+						g_hitFindCooldown = kHitFindInterval;
+						SDK::UObject* projectileCdo = g_grenadeGlobalHandle[kGrenadeFuse].object.Get();
+						int total = 0;
+						SDK::UObject* found = FindNewestProjectile(projectileCdo ? projectileCdo->Class : nullptr, total);
+						if (found && !static_cast<SDK::AActor*>(found)->bActorIsBeingDestroyed)
+						{
+							g_hitProjectile.Set(found);
+							g_hitSeen  = true;
+							projectile = found;
+						}
+					}
+					if (!g_hitSeen)
+					{
+						if (g_hitElapsed >= kHitFindSeconds)
+						{
+							LOG_INFO("GrenadeDamageProbe: no grenade projectile found after the throw; nothing tracked.");
+							ResetHitTracker();
+						}
+						return;
+					}
+				}
+
+				if (projectile)
+				{
+					const SDK::FVector p = static_cast<SDK::AActor*>(projectile)->K2_GetActorLocation();
+					g_hitPos[0] = p.X; g_hitPos[1] = p.Y; g_hitPos[2] = p.Z;
+					g_hitHavePos = true;
+				}
+				else if (!g_hitGone)
+				{
+					g_hitGone = true;
+					g_hitTail = 0.0f;
+				}
+				else
+				{
+					g_hitTail += deltaSeconds;
+				}
+
+				// New enemies come into range only while the projectile is alive.
+				if (g_hitHavePos && !g_hitGone && g_hitTracked.size() < kHitMaxTracked)
+				{
+					g_hitScanCooldown -= deltaSeconds;
+					if (g_hitScanCooldown <= 0.0f)
+					{
+						g_hitScanCooldown = kHitScanInterval;
+						ScanHitCandidates();
+					}
+
+					const double reach = kHitDamageRadius + kHitNearMargin;
+					for (const ObjectRef<SDK::AActor>& ref : g_hitCandidates)
+					{
+						if (g_hitTracked.size() >= kHitMaxTracked)
+							break;
+						SDK::AActor* actor = ref.Get();
+						if (!actor || !HitActorLive(actor))
+							continue;
+						bool known = false;
+						for (const HitTracked& e : g_hitTracked)
+							if (e.actor.Get() == actor) { known = true; break; }
+						if (known)
+							continue;
+
+						const SDK::FVector loc = actor->K2_GetActorLocation();
+						const double dx = loc.X - g_hitPos[0], dy = loc.Y - g_hitPos[1], dz = loc.Z - g_hitPos[2];
+						if (dx * dx + dy * dy + dz * dz > reach * reach)
+							continue;
+
+						HitTracked e;
+						SampleHitHealth(actor, e.hasMass, e.massBefore, e.hasGas, e.gasBefore);
+						if (!e.hasMass && !e.hasGas)
+						{
+							++g_hitUnreadable;
+							continue;
+						}
+						e.massLast = e.massBefore;
+						e.gasLast  = e.gasBefore;
+						e.actor.Set(actor);
+						e.name = "<unreadable>";
+						try { e.name = actor->GetName(); } catch (...) {}
+						g_hitTracked.push_back(std::move(e));
+					}
+				}
+
+				// Last health of every tracked enemy that is still around.
+				for (HitTracked& e : g_hitTracked)
+				{
+					if (e.gone)
+						continue;
+					SDK::AActor* actor = e.actor.Get();
+					if (!actor || !HitActorLive(actor))
+					{
+						e.gone = true;
+						continue;
+					}
+					bool hasMass, hasGas;
+					float mass = 0.0f, gas = 0.0f;
+					SampleHitHealth(actor, hasMass, mass, hasGas, gas);
+					if (hasMass && e.hasMass) e.massLast = mass;
+					if (hasGas  && e.hasGas)  e.gasLast  = gas;
+				}
+			}
+			catch (...)
+			{
+				LOG_WARN("GrenadeDamageProbe: exception while tracking the grenade hit; window dropped.");
+				ResetHitTracker();
+				return;
+			}
+
+			if ((g_hitGone && g_hitTail >= kHitTailSeconds) || g_hitElapsed >= kHitMaxSeconds)
+				FinishHitTracker();
+		}
+
 		// Call once per tick. `attrs` is the player's grenade charge set (null if
 		// none) and `grenadeEquipped` says a grenade is the equipped weapon; arming
 		// needs both. A drop only counts as a throw if it is on the same attribute
 		// set as last tick (not a respawn or reload), Max Charges did not just
 		// change, and the charge is still below Max (not a clamp to a lowered Max).
 		// Call before anything tops CurrentGrenadeCharge back up.
-		void ProbeGrenadeThrow(SDK::UCrGrenadeChargeAttributeSet* attrs, bool grenadeEquipped, float deltaSeconds)
+		void ProbeGrenadeThrow(SDK::UCrGrenadeChargeAttributeSet* attrs, bool grenadeEquipped, float deltaSeconds,
+			float damageScale, float baseDamage)
 		{
-			if (g_throwProbeDone || g_throwProbeMisses >= kThrowProbeMaxMisses)
-				return;
+			TickHitTracker(deltaSeconds);
+
+			// The spec dump below is one shot; the hit tracker arms on every throw.
+			const bool specProbeOff = g_throwProbeDone || g_throwProbeMisses >= kThrowProbeMaxMisses;
 
 			if (g_throwProbeWindow <= 0.0f)
 			{
@@ -583,6 +881,10 @@ namespace BetterCheats::Panels::Weapons
 				g_throwProbeLastMax    = maxCharge;
 
 				if (!threw)
+					return;
+
+				StartHitTracker(damageScale, baseDamage);
+				if (specProbeOff)
 					return;
 
 				g_throwProbeWindow       = kThrowProbeWindowSeconds;
@@ -1681,7 +1983,8 @@ namespace BetterCheats::Panels::Weapons
 			ForgetGrenadeAttrsIfOwnerChanged(grenadeAttrs);
 
 			// Before the top-up below, so an Infinite Charges refill can't hide the drop.
-			ProbeGrenadeThrow(grenadeAttrs, grenadeData != nullptr, deltaSeconds);
+			ProbeGrenadeThrow(grenadeAttrs, grenadeData != nullptr, deltaSeconds,
+				g_grenadeBaseDamageScale.load(), grenadeData ? grenadeData->BaseDamage.Value : 0.0f);
 
 			if (grenadeAttrs)
 			{
