@@ -1094,7 +1094,8 @@ namespace BetterCheats::Panels::Weapons
 		// asset, a different CDO type), so they get their own small parallel
 		// arrays instead of a slot in that one. `unmod` is the same "captured
 		// original while active, live read while not" value g_dbgWeaponBaseMagazine
-		// already computes for Magazine Size, feeding RenderLiveValue's always-on "Unmodified" tooltip line.
+		// already computes for Magazine Size, feeding RenderLiveValue's always-on
+		// "Unmodified" tooltip line.
 		// Only ever populated while a grenade profile is the one equipped -- see
 		// Tick()'s grenade block.
 		std::atomic<float> g_dbgGrenadeGame[kGrenadeRowCount];
@@ -1288,21 +1289,17 @@ namespace BetterCheats::Panels::Weapons
 		constexpr float kGrenadeBaseDamageFinalMax = 1000000.0f;
 		constexpr const char* kGrenadeBaseDamageKey = "playerWeapons.compose.grenadeBaseDamage";
 
-		// Builds up to 0.21.0-gss.55 wrote the player's Max/Min grenade charge
-		// attributes. Those rows are gone; this undoes a write a previous plugin
-		// instance left behind in the game's own attribute set (the stored pair
-		// the compose code kept), once per attribute set per loaded session. The
-		// pointer is only compared, never dereferenced.
-		const SDK::UCrGrenadeChargeAttributeSet* g_legacyChargeCheckedSet = nullptr;
-		uint32_t                                 g_legacyChargeCheckedGeneration = 0;
+		// Earlier builds had Max Charges and Min Charge rows that wrote the
+		// player's grenade charge attributes. Those rows are gone; this undoes a
+		// write a previous plugin instance left behind in the game's own attribute
+		// set (the stored pair the compose code kept), once per loaded session.
+		uint32_t g_legacyChargeCheckedGeneration = 0;
 
 		void RestoreLegacyGrenadeChargeWrites(SDK::UCrGrenadeChargeAttributeSet* attrs)
 		{
 			const uint32_t generation = SessionConfig::Generation();
-			if (!attrs || generation == 0
-				|| (attrs == g_legacyChargeCheckedSet && generation == g_legacyChargeCheckedGeneration))
+			if (!attrs || generation == 0 || generation == g_legacyChargeCheckedGeneration)
 				return;
-			g_legacyChargeCheckedSet        = attrs;
 			g_legacyChargeCheckedGeneration = generation;
 
 			const auto restore = [](const char* key, float& value)
@@ -1894,10 +1891,10 @@ namespace BetterCheats::Panels::Weapons
 			// Grenade rows. Charge Cost lives on the equipped grenade
 			// TYPE's own data asset (UCrGrenadeWeaponItemDataBase extends
 			// UCrWeaponItemDataBase, so LastEquippedWeaponData covers it too) --
-			// same per-type-CDO shape as BaseMagazine above. Both rows apply only while
-			// a grenade profile is the one currently equipped, matching every other
-			// per-weapon row in this file: switching to a gun or tool releases them
-			// exactly like switching weapons releases Damage/Fire Rate/etc.
+			// same per-type-CDO shape as BaseMagazine above. Damage and Charge Cost apply
+			// only while a grenade profile is the one currently equipped, matching
+			// every other per-weapon row in this file: switching to a gun or tool
+			// releases them exactly like switching weapons releases Fire Rate/etc.
 			//
 			// Spending the last charge takes the grenade out of the player's hand, so
 			// "equipped" alone would drop every grenade row at 0 charges -- exactly
@@ -2569,7 +2566,7 @@ namespace BetterCheats::Panels::Weapons
 						spec.expected      = g_dbgGrenadeExpected[g].load();
 						spec.game          = g_dbgGrenadeGame[g].load();
 						spec.composing     = active;
-						spec.hasBase       = false;   // no BaseValue split for these -- see cost/capacity comments in Tick()
+						spec.hasBase       = false;   // no BaseValue split for these -- see the cost comment in Tick()
 						spec.unmodified    = g_dbgGrenadeUnmod[g].load();
 						spec.changeDesc    = changeDesc;
 						spec.labelReserve  = grenadeLabelReserve;
