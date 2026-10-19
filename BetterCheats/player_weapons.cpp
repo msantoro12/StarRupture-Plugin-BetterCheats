@@ -972,6 +972,11 @@ namespace BetterCheats::Panels::Weapons
 		BetterCheats::ComposedAttribute    g_composedGrenadeCost;
 		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_grenadeCostOwner;
 
+		// The last grenade the grenade rows applied to, and its tab, so they keep
+		// following it once the grenade leaves the player's hand (see Tick()).
+		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_lastGrenadeData;
+		int                                          g_lastGrenadeProfile = -1;
+
 		// Grenade damage-source test (see the GrenadeDamageProbe log lines): scales
 		// BaseDamage.Value on the equipped grenade's data asset so a throw at 1x vs
 		// the scaled value shows whether the explosion reads it. Set through the
@@ -1430,10 +1435,12 @@ namespace BetterCheats::Panels::Weapons
 
 		// Tab presence for whatever grenade is currently equipped, independent of the
 		// active-profile selection below -- see GetEquippedGrenadeItemData.
-		if (SDK::UCrGrenadeWeaponItemDataBase* grenadeData = GetEquippedGrenadeItemData(character->WeaponSystem))
+		SDK::UCrGrenadeWeaponItemDataBase* slotGrenade = GetEquippedGrenadeItemData(character->WeaponSystem);
+		int slotGrenadeProfile = -1;
+		if (slotGrenade)
 		{
 			std::lock_guard<std::mutex> lock(g_profilesMutex);
-			FindOrCreateProfile(grenadeData->GetName(), true);
+			slotGrenadeProfile = FindOrCreateProfile(slotGrenade->GetName(), true);
 		}
 
 		if (SDK::UCrWeaponItemDataBase* data = character->WeaponSystem->LastEquippedWeaponData)
@@ -1465,9 +1472,13 @@ namespace BetterCheats::Panels::Weapons
 		// overridden with no weapon out) while still updating every debug atomic.
 		Profile profile;
 		bool haveActiveProfile = false;
+		bool anyInfiniteCharges = false;
 		int  activeIndex = -1;
 		{
 			std::lock_guard<std::mutex> lock(g_profilesMutex);
+			for (const Profile& p : g_profiles)
+				if (p.isGrenade && p.infiniteCharges)
+					anyInfiniteCharges = true;
 			const int active = g_activeProfile.load();
 			if (active >= 0 && active < static_cast<int>(g_profiles.size()))
 			{
@@ -1587,10 +1598,38 @@ namespace BetterCheats::Panels::Weapons
 			// currently equipped, matching every other per-weapon row in this
 			// file: switching to a gun or tool releases them exactly like
 			// switching weapons releases Damage/Fire Rate/etc.
+			//
+			// Spending the last charge takes the grenade out of the player's hand, so
+			// "equipped" alone would drop every grenade row at 0 charges -- exactly
+			// when Max Charges, Charge Cost and Infinite Charges are needed. When no
+			// grenade is in hand the rows follow the grenade the weapon component
+			// reports, or failing that the last one seen.
 			SDK::UCrGrenadeWeaponItemDataBase* grenadeData =
 				(equippedData && equippedData->IsA(SDK::UCrGrenadeWeaponItemDataBase::StaticClass()))
 					? static_cast<SDK::UCrGrenadeWeaponItemDataBase*>(equippedData)
-					: nullptr;
+					: slotGrenade;
+			if (!grenadeData)
+				grenadeData = g_lastGrenadeData.Get();
+			Profile grenadeProfile;
+			ResetProfileValues(grenadeProfile);
+			if (grenadeData)
+			{
+				g_lastGrenadeData.Set(grenadeData);
+				if (profile.isGrenade)
+					grenadeProfile = profile;
+				else
+				{
+					std::lock_guard<std::mutex> lock(g_profilesMutex);
+					if (slotGrenadeProfile >= 0 && grenadeData == slotGrenade)
+						g_lastGrenadeProfile = slotGrenadeProfile;
+					else if (g_lastGrenadeProfile < 0)
+						g_lastGrenadeProfile = FindOrCreateProfile(grenadeData->GetName(), true);
+					if (g_lastGrenadeProfile >= 0 && g_lastGrenadeProfile < static_cast<int>(g_profiles.size()))
+						grenadeProfile = g_profiles[g_lastGrenadeProfile];
+				}
+				if (profile.isGrenade)
+					g_lastGrenadeProfile = activeIndex;
+			}
 			ReleaseGrenadeCostIfOwnerChanged(grenadeData);
 			ReleaseGrenadeBaseDamageIfOwnerChanged(grenadeData);
 
@@ -1627,10 +1666,10 @@ namespace BetterCheats::Panels::Weapons
 				}
 
 				const bool active = BetterCheats::DiffersFromDefault(
-					profile.grenadeValues[kGrenadeCost], kGrenadeRows[kGrenadeCost].defaultValue);
+					grenadeProfile.grenadeValues[kGrenadeCost], kGrenadeRows[kGrenadeCost].defaultValue);
 				const ComposeStep step = ApplyComposedRow(g_composedGrenadeCost, grenadeData,
 					grenadeData->GrenadeThrowCostOfGrenadeCharge, "playerWeapons.compose.grenadeCost",
-					active, profile.grenadeValues[kGrenadeCost], kGrenadeModes[kGrenadeCost],
+					active, grenadeProfile.grenadeValues[kGrenadeCost], kGrenadeModes[kGrenadeCost],
 					kGrenadeRows[kGrenadeCost].minValue, kGrenadeRows[kGrenadeCost].maxValue);
 
 				g_dbgGrenadeGame[kGrenadeCost].store(step.game);
@@ -1650,12 +1689,12 @@ namespace BetterCheats::Panels::Weapons
 				{
 					const GrenadeRowDef& def = kGrenadeRows[g];
 					float& value = (grenadeAttrs->*def.member).CurrentValue;
-					const bool active = grenadeData && BetterCheats::DiffersFromDefault(profile.grenadeValues[g], def.defaultValue);
+					const bool active = grenadeData && BetterCheats::DiffersFromDefault(grenadeProfile.grenadeValues[g], def.defaultValue);
 					BetterCheats::ComposedAttribute& composed = g_composedGrenade[g - kGrenadeMax];
 					const std::string key = std::string("playerWeapons.compose.") + def.key;
 
 					const ComposeStep step = ApplyComposedRow(composed, grenadeAttrs, value, key,
-						active, profile.grenadeValues[g], kGrenadeModes[g], def.minValue, def.maxValue);
+						active, grenadeProfile.grenadeValues[g], kGrenadeModes[g], def.minValue, def.maxValue);
 
 					g_dbgGrenadeGame[g].store(step.game);
 					g_dbgGrenadeExpected[g].store(step.expected);
@@ -1668,12 +1707,22 @@ namespace BetterCheats::Panels::Weapons
 				// fight a regen-style LEM/buff), only a top-up on the edge where
 				// it's short of whatever Max is currently honouring (the game's
 				// own, or our Max Charges override just above).
-				if (grenadeData && profile.infiniteCharges)
+				//
+				// Not gated on a grenade being in hand: spending the last charge
+				// takes the grenade out of the player's hand, and the charge
+				// set is shared by every grenade type, so the toggle on any
+				// grenade tab keeps it full. The game's cost effect works on
+				// the base value, so that is topped up with the current value
+				// or the next recalculation would drop it back.
+				if (anyInfiniteCharges)
 				{
 					const float maxCharge = grenadeAttrs->MaxGrenadeCharge.CurrentValue;
-					const float curCharge = grenadeAttrs->CurrentGrenadeCharge.CurrentValue;
-					if (maxCharge > 0.0f && curCharge < maxCharge)
-						grenadeAttrs->CurrentGrenadeCharge.CurrentValue = maxCharge;
+					SDK::FGameplayAttributeData& charge = grenadeAttrs->CurrentGrenadeCharge;
+					if (maxCharge > 0.0f && (charge.CurrentValue < maxCharge || charge.BaseValue < maxCharge))
+					{
+						charge.CurrentValue = maxCharge;
+						charge.BaseValue    = maxCharge;
+					}
 				}
 			}
 
