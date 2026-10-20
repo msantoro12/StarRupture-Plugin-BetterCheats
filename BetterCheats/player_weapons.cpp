@@ -1597,6 +1597,10 @@ namespace BetterCheats::Panels::Weapons
 				ReleaseGrenadeFalloffNow();
 			if (!curve)
 				return;
+			// No session yet means the leftover check below can't read its pair:
+			// capture only once one is loaded.
+			if (!g_grenadeFalloff.captured && SessionConfig::Generation() == 0)
+				return;
 
 			auto& keys = curve->FloatCurve.Keys;
 			if (!g_grenadeFalloff.captured)
