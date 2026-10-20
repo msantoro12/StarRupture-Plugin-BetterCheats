@@ -557,6 +557,8 @@ namespace BetterCheats::Panels::Weapons
 		constexpr double kHitDamageRadius  = 900.0;   // BP_GrenadeProjectile_C DamageRadius, before the Blast Radius row
 		constexpr double kHitNearMargin    = 300.0;
 		constexpr float  kHitTailSeconds   = 1.5f;
+		constexpr float  kHitDefaultFuse   = 4.0f;    // BP_GrenadeProjectile_C TimeToExplode, if neither the projectile nor its CDO reads
+		constexpr float  kHitAfterFuse     = 1.0f;    // the window never ends before throw + fuse + this
 		constexpr float  kHitFindSeconds   = 2.0f;
 		constexpr float  kHitFindInterval  = 0.1f;
 		constexpr float  kHitScanInterval  = 0.5f;    // GObjects walk for candidate enemies
@@ -571,6 +573,7 @@ namespace BetterCheats::Panels::Weapons
 			bool  hasMass = false, hasGas = false;
 			float massBefore = 0.0f, massLast = 0.0f;
 			float gasBefore  = 0.0f, gasLast  = 0.0f;
+			float maxHealth  = 0.0f;  // GAS MaxHealth at first sight, 0 if unreadable
 			int   massMisses = 0; // consecutive ticks the Mass fragment could not be read
 			bool  gone = false;   // despawned, pooled or destroyed: counts as died
 		};
@@ -585,6 +588,11 @@ namespace BetterCheats::Panels::Weapons
 		float                                  g_hitTail          = 0.0f;
 		float                                  g_hitScale         = 1.0f;
 		float                                  g_hitBaseDamage    = 0.0f;
+		float                                  g_hitMinEnd        = kHitDefaultFuse + kHitAfterFuse;
+		bool                                   g_hitSelfHave      = false;
+		float                                  g_hitSelfBefore    = 0.0f;
+		float                                  g_hitSelfLast      = 0.0f;
+		float                                  g_hitSelfMin       = 0.0f;
 		int                                    g_hitUnreadable    = 0;
 		double                                 g_hitPos[3]        = {};
 		ObjectRef<SDK::UObject>                g_hitProjectile;
@@ -678,21 +686,28 @@ namespace BetterCheats::Panels::Weapons
 					++hit;
 					total += lost;
 				}
-				LOG_INFO("GrenadeDamageProbe: hit '%s' health %.1f -> %.1f (lost %.1f, %s), grenade scale x%.2f, BaseDamage %.2f",
-					e.name.c_str(), before, after, lost, died ? "died" : "alive", g_hitScale, g_hitBaseDamage);
+				const float pct = e.maxHealth > 0.0f ? 100.0f * lost / e.maxHealth : 0.0f;
+				LOG_INFO("GrenadeDamageProbe: hit '%s' health %.1f -> %.1f of max %.1f (lost %.1f = %.1f%%, %s), grenade scale x%.2f, BaseDamage %.2f",
+					e.name.c_str(), before, after, e.maxHealth, lost, pct, died ? "died" : "alive", g_hitScale, g_hitBaseDamage);
 			}
+			if (g_hitSelfHave)
+				LOG_INFO("GrenadeDamageProbe: self health %.1f -> %.1f (lowest %.1f, lost %.1f)",
+					g_hitSelfBefore, g_hitSelfLast, g_hitSelfMin, g_hitSelfBefore - g_hitSelfMin);
 			LOG_INFO("GrenadeDamageProbe: summary: %d of %d tracked enem%s hit, total damage %.1f, grenade scale x%.2f, BaseDamage %.2f%s",
 				hit, static_cast<int>(g_hitTracked.size()), g_hitTracked.size() == 1 ? "y" : "ies", total, g_hitScale, g_hitBaseDamage,
 				g_hitUnreadable > 0 ? " (some enemies had no readable health)" : "");
 			ResetHitTracker();
 		}
 
-		void StartHitTracker(float scale, float baseDamage)
+		void StartHitTracker(float scale, float baseDamage, SDK::UCrHealthAttributeSet* selfHealth)
 		{
 			if (g_hitActive)
 				return;   // one window at a time
 			ResetHitTracker();
 			g_hitActive       = true;
+			g_hitMinEnd       = kHitDefaultFuse + kHitAfterFuse;
+			g_hitSelfHave     = selfHealth != nullptr;
+			g_hitSelfBefore   = g_hitSelfLast = g_hitSelfMin = selfHealth ? selfHealth->CurrentHealth.CurrentValue : 0.0f;
 			g_hitScale        = scale;
 			g_hitBaseDamage   = baseDamage;
 			g_hitElapsed      = 0.0f;
@@ -704,7 +719,26 @@ namespace BetterCheats::Panels::Weapons
 				scale, baseDamage);
 		}
 
-		void TickHitTracker(float deltaSeconds)
+		// The live projectile's own TimeToExplode (follows the Fuse Time row),
+		// else the projectile CDO's, else the stock fuse.
+		float ReadHitFuse(SDK::UObject* projectile)
+		{
+			IPluginHooks* hooks = GetHooks();
+			IPluginObjectProperties* props = hooks ? hooks->ObjectProperties : nullptr;
+			const CdoFieldHandle& fh = g_grenadeGlobalHandle[kGrenadeFuse];
+			double raw = 0.0;
+			if (props && fh.ok)
+			{
+				if (projectile && props->GetFloatProperty(projectile, fh.property, &raw) && raw > 0.0)
+					return static_cast<float>(raw);
+				if (SDK::UObject* cdo = fh.object.Get())
+					if (props->GetFloatProperty(cdo, fh.property, &raw) && raw > 0.0)
+						return static_cast<float>(raw);
+			}
+			return kHitDefaultFuse;
+		}
+
+		void TickHitTracker(float deltaSeconds, SDK::UCrHealthAttributeSet* selfHealth)
 		{
 			if (!g_hitActive)
 				return;
@@ -713,6 +747,12 @@ namespace BetterCheats::Panels::Weapons
 			try
 			{
 				BetterCheats::Panels::Enemies::PrepareHealthReads(deltaSeconds);
+
+				if (selfHealth && g_hitSelfHave)
+				{
+					g_hitSelfLast = selfHealth->CurrentHealth.CurrentValue;
+					g_hitSelfMin  = (std::min)(g_hitSelfMin, g_hitSelfLast);
+				}
 
 				SDK::UObject* projectile = g_hitProjectile.Get();
 				if (projectile && static_cast<SDK::AActor*>(projectile)->bActorIsBeingDestroyed)
@@ -732,6 +772,7 @@ namespace BetterCheats::Panels::Weapons
 							g_hitProjectile.Set(found);
 							g_hitSeen  = true;
 							projectile = found;
+							g_hitMinEnd = ReadHitFuse(found) + kHitAfterFuse;
 						}
 					}
 					if (!g_hitSeen)
@@ -809,6 +850,8 @@ namespace BetterCheats::Panels::Weapons
 						}
 						e.massLast = e.massBefore;
 						e.gasLast  = e.gasBefore;
+						if (SDK::UCrAIBaseAttributeSet* attrs = static_cast<SDK::ACrAIBase*>(actor)->BaseAttributes)
+							e.maxHealth = attrs->MaxHealth.CurrentValue;
 						e.actor.Set(actor);
 						e.name = "<unreadable>";
 						try { e.name = actor->GetName(); } catch (...) {}
@@ -844,7 +887,11 @@ namespace BetterCheats::Panels::Weapons
 				return;
 			}
 
-			if ((g_hitGone && g_hitTail >= kHitTailSeconds) || g_hitElapsed >= kHitMaxSeconds)
+			// Never before the fuse plus a second: the damage lands at detonation,
+			// which a read taken when the projectile disappears can still miss.
+			const bool pastFuse = g_hitElapsed >= g_hitMinEnd;
+			if ((g_hitGone && g_hitTail >= kHitTailSeconds && pastFuse)
+				|| g_hitElapsed >= (std::max)(kHitMaxSeconds, g_hitMinEnd + kHitTailSeconds))
 				FinishHitTracker();
 		}
 
@@ -855,9 +902,9 @@ namespace BetterCheats::Panels::Weapons
 		// change, and the charge is still below Max (not a clamp to a lowered Max).
 		// Call before anything tops CurrentGrenadeCharge back up.
 		void ProbeGrenadeThrow(SDK::UCrGrenadeChargeAttributeSet* attrs, bool grenadeEquipped, float deltaSeconds,
-			float damageScale, float baseDamage)
+			float damageScale, float baseDamage, SDK::UCrHealthAttributeSet* selfHealth)
 		{
-			TickHitTracker(deltaSeconds);
+			TickHitTracker(deltaSeconds, selfHealth);
 
 			// The spec dump below is one shot; the hit tracker arms on every throw.
 			const bool specProbeOff = g_throwProbeDone || g_throwProbeMisses >= kThrowProbeMaxMisses;
@@ -888,7 +935,7 @@ namespace BetterCheats::Panels::Weapons
 				if (!threw)
 					return;
 
-				StartHitTracker(damageScale, baseDamage);
+				StartHitTracker(damageScale, baseDamage, selfHealth);
 				if (specProbeOff)
 					return;
 
@@ -2186,7 +2233,8 @@ namespace BetterCheats::Panels::Weapons
 			// Before the top-up below, so an Infinite Charges refill can't hide the drop.
 			ProbeGrenadeThrow(grenadeAttrs, grenadeData != nullptr, deltaSeconds,
 				grenadeData ? grenadeProfile.grenadeValues[kGrenadeDamage] : 1.0f,
-				grenadeData ? grenadeData->BaseDamage.Value : 0.0f);
+				grenadeData ? grenadeData->BaseDamage.Value : 0.0f,
+				character->HealthAttributes);
 
 			if (grenadeAttrs)
 			{
