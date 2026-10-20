@@ -1407,6 +1407,46 @@ namespace BetterCheats::Panels::Weapons
 			}
 		}
 
+		// Which input the explosion's damage really reads, logged once per grenade
+		// type when Tick() resolves it. With bIsUsingDamageFalloff set the game
+		// takes BaseDamageFalloff at the hit distance and never reads BaseDamage.
+		ObjectRef<SDK::UCrGrenadeWeaponItemDataBase> g_damageSourceLogged;
+
+		void LogGrenadeDamageSource(SDK::UCrGrenadeWeaponItemDataBase* grenade)
+		{
+			if (!grenade || g_damageSourceLogged.Get() == grenade)
+				return;
+			g_damageSourceLogged.Set(grenade);
+			try
+			{
+				const std::string name = grenade->GetName();
+				const bool falloff = grenade->bIsUsingDamageFalloff;
+				SDK::UCurveFloat* curve = grenade->BaseDamageFalloff;
+				if (!curve)
+				{
+					LOG_INFO("GrenadeDamageProbe: '%s' falloff=%d curve=null BaseDamage=%.2f",
+						name.c_str(), falloff ? 1 : 0, grenade->BaseDamage.Value);
+					return;
+				}
+				const auto& keys = curve->FloatCurve.Keys;
+				const int n = keys.Num();
+				const std::string path = curve->GetFullName();
+				if (n <= 0)
+				{
+					LOG_INFO("GrenadeDamageProbe: '%s' falloff=%d curve='%s' keys=0 BaseDamage=%.2f",
+						name.c_str(), falloff ? 1 : 0, path.c_str(), grenade->BaseDamage.Value);
+					return;
+				}
+				LOG_INFO("GrenadeDamageProbe: '%s' falloff=%d curve='%s' keys=%d first=(%.1f, %.2f) last=(%.1f, %.2f) BaseDamage=%.2f",
+					name.c_str(), falloff ? 1 : 0, path.c_str(), n,
+					keys[0].Time, keys[0].Value, keys[n - 1].Time, keys[n - 1].Value, grenade->BaseDamage.Value);
+			}
+			catch (...)
+			{
+				LOG_WARN("GrenadeDamageProbe: exception reading the grenade's damage source.");
+			}
+		}
+
 		constexpr const char* kChimeraMainWorldName = "ChimeraMain";
 
 		void OnBeforeWorldEndPlay(SDK::UWorld* /*world*/, const char* worldName)
@@ -1924,6 +1964,7 @@ namespace BetterCheats::Panels::Weapons
 						grenadeProfile = g_profiles[index];
 				}
 			}
+			LogGrenadeDamageSource(grenadeData);
 			ReleaseGrenadeCostIfOwnerChanged(grenadeData);
 			ReleaseGrenadeBaseDamageIfOwnerChanged(grenadeData);
 
