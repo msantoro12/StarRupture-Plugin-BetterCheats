@@ -1668,7 +1668,7 @@ namespace BetterCheats::Panels::Weapons
 						g_grenadeFalloff.written = 1.0f;
 					}
 					BetterCheats::ClearComposeState(kGrenadeFalloffKey);
-					LOG_WARN("GrenadeDamageProbe: falloff curve '%s' is also read by '%s'; the Damage row will not scale it.",
+					LOG_WARN("Weapons: grenade falloff curve '%s' is also read by '%s'; the Damage row will not scale it.",
 						curve->GetFullName().c_str(), other.c_str());
 				}
 			}
@@ -2336,7 +2336,6 @@ namespace BetterCheats::Panels::Weapons
 						props->SetFloatProperty(object, h.property, static_cast<double>(valueF));
 				}
 			}
-
 
 			// Ammo (the reserve pool) is Net/RepNotify and reverts on the next replication
 			// tick if written directly; the unreplicated Cr multiplier is what sticks.
