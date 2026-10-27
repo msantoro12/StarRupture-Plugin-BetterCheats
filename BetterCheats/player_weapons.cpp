@@ -2186,10 +2186,8 @@ namespace BetterCheats::Panels::Weapons
 			// Grenade rows. Charge Cost lives on the equipped grenade
 			// TYPE's own data asset (UCrGrenadeWeaponItemDataBase extends
 			// UCrWeaponItemDataBase, so LastEquippedWeaponData covers it too) --
-			// same per-type-CDO shape as BaseMagazine above. Damage and Charge Cost apply
-			// only while a grenade profile is the one currently equipped, matching
-			// every other per-weapon row in this file: switching to a gun or tool
-			// releases them exactly like switching weapons releases Fire Rate/etc.
+			// same per-type-CDO shape as BaseMagazine above. Damage and Charge Cost
+			// are per grenade type and are released when the grenade type changes.
 			//
 			// Spending the last charge takes the grenade out of the player's hand, so
 			// "equipped" alone would drop every grenade row at 0 charges -- exactly

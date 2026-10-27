@@ -26,10 +26,10 @@
 // mid-session), but a miss in the loader's startup failure report is a
 // build-breaking bug to fix here, not something the menu degrades around.
 //
-// The Deconstruct Windows During Waves and Build Windows Anywhere patterns are
-// the exception: they back opt-in toggles, so they are scanned without the
-// loader recording anything, and a miss turns that toggle off instead of
-// refusing the plugin.
+// The Deconstruct Windows During Waves, Build Windows Anywhere and Build
+// Benches Anywhere patterns are the exception: they back opt-in toggles, so
+// they are scanned without the loader recording anything, and a miss turns
+// that toggle off instead of refusing the plugin.
 // ---------------------------------------------------------------------------
 
 namespace BetterCheats::AOB
