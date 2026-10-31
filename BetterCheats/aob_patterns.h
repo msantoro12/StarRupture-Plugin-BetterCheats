@@ -69,7 +69,7 @@ namespace BetterCheats::AOB
 	// Parameters       (UCrBuildingComponent* this) -> EAuAPlacementConditionResult
 	// Hooked to return Valid (1) when no-build-cost cheat is active.
 	constexpr const char* GetResourceConditionResult =
-		"48 8B C4 53 57 48 83 EC ?? 48 89 68 ?? 48 8B D9 48 8B 89";
+		"48 89 5C 24 10 48 89 6C 24 18 56 57 41 56 48 83 EC 40 48 8B F9 48 8B 89";
 
 	// Class::Function  UAuActorPlacementComponent::AddPoint
 	// Parameters       (UAuActorPlacementComponent* this) -> FScriptContainerElement*
