@@ -25,7 +25,7 @@ namespace BetterCheats::AOB
 	// the call site and the rel32 at that offset gives the function. A list of
 	// them carries a function across a game update that changed its code, one
 	// pattern per build, the build players have now first. ResolveFunction
-	// resolves the first that matches exactly once.
+	// resolves the first that matches exactly once at a function entry.
 	struct FunctionPattern
 	{
 		const char* pattern;
