@@ -82,8 +82,9 @@ namespace BetterCheats::AOB
 	// Parameters       (UCrBuildingComponent* this) -> EAuAPlacementConditionResult
 	// Hooked to return Valid (1) when no-build-cost cheat is active.
 	// Formerly GetResourceConditionResult — renamed by the game, same contract.
-	constexpr const char* GetPlacementResourceConditionResult =
-		"48 89 5C 24 ?? 48 89 6C 24 ?? 56 57 41 56 48 83 EC ?? 48 8B F9 48 8B 89";
+	constexpr FunctionPattern GetPlacementResourceConditionResult[] = {
+		{ "48 8B C8 E8 ?? ?? ?? ?? 0F B6 D8 88 9F ?? ?? 00 00", 3 },
+	};
 
 	// Class::Function  UAuActorPlacementComponent::AddPoint
 	// Parameters       (UAuActorPlacementComponent* this) -> FScriptContainerElement*
@@ -112,8 +113,10 @@ namespace BetterCheats::AOB
 	// pattern pinned both the imm8 encoding and the modrm bytes of those moves,
 	// which is why it stopped matching. Register bytes and the frame size are
 	// wildcarded now so the next re-allocation does not break it again.
-	constexpr const char* CheckStability_Custom =
-		"40 53 57 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F9 48 85 D2 75 ?? 32 C0";
+	constexpr FunctionPattern CheckStability_Custom[] = {
+		{ "40 53 57 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F9 48 85 D2 75 ?? 32 C0" },
+		{ "40 53 55 56 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F1" },
+	};
 
 
 	// Class::Function  ACrAPHelperDynamicPillar::CheckStability
@@ -129,8 +132,10 @@ namespace BetterCheats::AOB
 	// code, but rbx was re-allocated to rsi, so the push/pop and the `this` move
 	// all changed bytes. The register bytes and the member offset are wildcarded;
 	// the two register saves after the early-out keep the match unique.
-	constexpr const char* CheckStability_DynamicPillar =
-		"40 56 48 83 EC ?? 48 83 B9 ?? ?? ?? ?? ?? 48 8B F1 75 ?? 32 C0";
+	constexpr FunctionPattern CheckStability_DynamicPillar[] = {
+		{ "40 56 48 83 EC ?? 48 83 B9 ?? ?? ?? ?? ?? 48 8B F1 75 ?? 32 C0" },
+		{ "48 89 74 24 18 57 48 83 EC 60 48 8B F1 E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 48 83 BE ?? ?? ?? ?? 00" },
+	};
 
 
 	// Class::Function  ACrTechnologyKeeper::CheckAvailableBuildings
@@ -339,8 +344,9 @@ namespace BetterCheats::AOB
 	// HandleOnInventorySizeChanged, so it runs each time the grid is drawn or
 	// rebuilt. Ends on `lea r12, [rcx+468h]` -- the container's private
 	// TWeakObjectPtr<UCrInventoryComponent>.
-	constexpr const char* InventoryContainer_InitInventorySlots =
-		"48 89 5C 24 ?? 48 89 6C 24 ?? 56 57 41 54 41 56 41 57 48 83 EC 70 4C 8D A1";
+	constexpr FunctionPattern InventoryContainer_InitInventorySlots[] = {
+		{ "48 8B 89 60 04 00 00 48 8B 01 FF 90 10 03 00 00 48 8B CB 48 83 C4 20 5B E9", 24 },
+	};
 
 	// Class::Function  UE::StructUtils::GetStructInstanceCrc32
 	// Parameters       (const UScriptStruct* ScriptStruct, const uint8* StructMemory, uint32 CRC) -> uint32
