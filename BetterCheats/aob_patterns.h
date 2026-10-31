@@ -1,5 +1,6 @@
 #pragma once
 #include <cstddef>
+#include <cstdint>
 
 // ---------------------------------------------------------------------------
 // AOB Pattern Registry
@@ -18,6 +19,18 @@
 
 namespace BetterCheats::AOB
 {
+
+	// A function pattern that needs more than one string. followRel32At >= 0
+	// anchors it on a call to the function rather than its entry: the match is
+	// the call site and the rel32 at that offset gives the function. A list of
+	// them carries a function across a game update that changed its code, one
+	// pattern per build, the build players have now first. ResolveFunction
+	// resolves the first that matches exactly once.
+	struct FunctionPattern
+	{
+		const char* pattern;
+		int32_t     followRel32At = -1;
+	};
 
 	// UCrGameInstance::ServerSessionName — offset within UCrGameInstance,
 		// not exposed by the generated SDK (folded into trailing padding bytes).

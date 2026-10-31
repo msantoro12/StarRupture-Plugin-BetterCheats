@@ -18,13 +18,18 @@ namespace BetterCheats::AOB
 		// refuses the plugin either way. It marks the addresses the feature
 		// modules genuinely null-check.
 		void ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
-			uintptr_t& out, const char* hookName, const char* pattern)
+			uintptr_t& out, const char* hookName, const char* pattern, int32_t followRel32At = -1)
 		{
 			PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
 			req.hookName = hookName;
 			req.pattern  = pattern;
 			req.kind     = PLUGIN_SCAN_FUNCTION_START;
 			req.flags    = PLUGIN_SCAN_FLAG_OPTIONAL;
+			if (followRel32At >= 0)
+			{
+				req.flags        |= PLUGIN_SCAN_FLAG_FOLLOW_REL32;
+				req.followRel32At = followRel32At;
+			}
 
 			out = scanner->Resolve(self, &req);
 			if (!out)
@@ -64,6 +69,30 @@ namespace BetterCheats::AOB
 		{
 			const uintptr_t addr = FindUnique(self, scanner, pattern);
 			return addr && OwningFunctionStart(addr) == addr ? addr : 0;
+		}
+
+		// A pattern list (aob_patterns.h) resolves its first pattern that matches
+		// exactly once, so the build players have now keeps the pattern it always
+		// had. The probe is the raw scan, which sees detours that Resolve reads
+		// through; when no pattern passes it, the first is resolved, which is what
+		// a single pattern would have done.
+		template <size_t N>
+		void ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
+			uintptr_t& out, const char* hookName, const FunctionPattern (&patterns)[N])
+		{
+			const FunctionPattern* pick = &patterns[0];
+			if constexpr (N > 1)
+			{
+				for (const FunctionPattern& candidate : patterns)
+				{
+					if (FindUnique(self, scanner, candidate.pattern))
+					{
+						pick = &candidate;
+						break;
+					}
+				}
+			}
+			ResolveFunction(self, scanner, out, hookName, pick->pattern, pick->followRel32At);
 		}
 
 		// Deconstruct Windows During Waves is opt-in, so its patterns go through
