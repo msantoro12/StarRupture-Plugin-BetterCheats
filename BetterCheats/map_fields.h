@@ -622,6 +622,10 @@ namespace BetterCheats::Features
 		Fields::CrGameStateBase_CorporationsOwner.key, Fields::CrCorporationsOwner_DataPoints.key
 	} };
 
+	inline PluginMap::Feature SessionFiles{ "session-config", "Saving cheat settings for each saved game", {
+		Fields::CrGameInstance_ServerSessionName.key
+	} };
+
 	inline PluginMap::Feature Wave{ "rupture-wave", "Rupture wave timer", {
 		Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer.key, Fields::CrEnviroWaveTimerSubsystem_bWaitingForNextWave.key,
 		Fields::CrEnviroWaveTimerSubsystem_bPause.key, Fields::CrEnviroWaveTimerSubsystem_bStopWaves.key,
@@ -634,7 +638,7 @@ namespace BetterCheats::Features
 	{
 		return PluginMap::DeclareFeatures(scanner, self,
 			Stats, Movement, Weapons, Mining, Inventory, Items, Skills,
-			BuildFree, BuildUnlock, BuildAnywhere, Enemies, Power, Corporations, Wave);
+			BuildFree, BuildUnlock, BuildAnywhere, Enemies, Power, Corporations, Wave, SessionFiles);
 	}
 
 	// What an off feature shows in place of its menu page.

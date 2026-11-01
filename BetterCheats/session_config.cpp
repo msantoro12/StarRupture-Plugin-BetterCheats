@@ -89,6 +89,10 @@ namespace BetterCheats::SessionConfig
 		// Must run on the game thread — touches UWorld/UObject state.
 		std::string ResolveSessionName()
 		{
+			// Without the session name there is no session to key the file on: nothing is loaded or saved.
+			if (!Features::SessionFiles.On())
+				return "";
+
 			try
 			{
 				LOG_DEBUG("Attempting to resolve current session name");
