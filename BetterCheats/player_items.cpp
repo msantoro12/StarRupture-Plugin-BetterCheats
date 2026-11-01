@@ -15,6 +15,7 @@
 #include "Chimera_classes.hpp"
 #include "AuItems_classes.hpp"
 #include "Engine_classes.hpp"
+#include "plugin_map.h"
 
 namespace BetterCheats::Panels::Items
 {
@@ -146,7 +147,7 @@ namespace BetterCheats::Panels::Items
 		SDK::ACrPlayerControllerBase* GetLocalController()
 		{
 			SDK::UWorld* world = nullptr;
-			try { world = SDK::UWorld::GetWorld(); }
+			try { world = PluginSdkRuntime::GetWorld(); }
 			catch (...) { return nullptr; }
 			if (!world) return nullptr;
 

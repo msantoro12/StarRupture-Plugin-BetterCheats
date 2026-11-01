@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include "plugin_map.h"
 
 namespace BetterCheats::SessionConfig
 {
@@ -91,7 +92,7 @@ namespace BetterCheats::SessionConfig
 			{
 				LOG_DEBUG("Attempting to resolve current session name");
 
-				SDK::UWorld* world = SDK::UWorld::GetWorld();
+				SDK::UWorld* world = PluginSdkRuntime::GetWorld();
 				if (!world)
 				{
 					LOG_DEBUG("SessionConfig: ResolveSessionName - no world loaded.");

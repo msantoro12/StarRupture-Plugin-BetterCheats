@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <mutex>
+#include "plugin_map.h"
 
 namespace BetterCheats::Panels::Attributes
 {
@@ -201,7 +202,7 @@ namespace BetterCheats::Panels::Attributes
 		{
 			try
 			{
-				SDK::UWorld* world = SDK::UWorld::GetWorld();
+				SDK::UWorld* world = PluginSdkRuntime::GetWorld();
 				if (!world)
 				{
 					LOG_DEBUG("RefreshHealthHud: no world loaded, skipping.");
@@ -450,7 +451,7 @@ namespace BetterCheats::Panels::Attributes
 			// for it, so probe the current world directly to pick up an in-progress session.
 			try
 			{
-				SDK::UWorld* world = SDK::UWorld::GetWorld();
+				SDK::UWorld* world = PluginSdkRuntime::GetWorld();
 				if (world && world->GetName() == kChimeraMainWorldName)
 					g_inChimeraMain = true;
 			}

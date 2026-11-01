@@ -8,6 +8,7 @@
 #include <string>
 
 #include "Chimera_classes.hpp"
+#include "plugin_map.h"
 
 namespace BetterCheats::Panels::Skills
 {
@@ -35,7 +36,7 @@ namespace BetterCheats::Panels::Skills
 		SDK::ACrPlayerControllerBase* GetLocalController()
 		{
 			SDK::UWorld* world = nullptr;
-			try { world = SDK::UWorld::GetWorld(); }
+			try { world = PluginSdkRuntime::GetWorld(); }
 			catch (...) { return nullptr; }
 			if (!world) return nullptr;
 

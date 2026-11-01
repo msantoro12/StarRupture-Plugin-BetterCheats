@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "plugin_map.h"
 
 namespace BetterCheats::Panels::Power
 {
@@ -568,7 +569,7 @@ namespace BetterCheats::Panels::Power
 
 			try
 			{
-				SDK::UWorld* world = SDK::UWorld::GetWorld();
+				SDK::UWorld* world = PluginSdkRuntime::GetWorld();
 				if (!world)
 				{
 					LOG_WARN("Power: no world loaded - skipping template rebuild for '%s'.", assetName);
@@ -692,7 +693,7 @@ namespace BetterCheats::Panels::Power
 
 			try
 			{
-				SDK::UWorld* world = SDK::UWorld::GetWorld();
+				SDK::UWorld* world = PluginSdkRuntime::GetWorld();
 				if (!world)
 				{
 					LOG_WARN("Power: no world loaded - skipping shared-fragment patch for '%s'.", assetName);

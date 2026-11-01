@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdio>
 #include <mutex>
+#include "plugin_map.h"
 
 namespace BetterCheats::Panels::Corporations
 {
@@ -28,7 +29,7 @@ namespace BetterCheats::Panels::Corporations
 		{
 			try
 			{
-				SDK::UWorld* world = SDK::UWorld::GetWorld();
+				SDK::UWorld* world = PluginSdkRuntime::GetWorld();
 				if (!world || !world->GameState) return nullptr;
 
 				// GameState is replicated — on a client it is briefly a different class

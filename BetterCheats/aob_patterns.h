@@ -20,12 +20,10 @@
 namespace BetterCheats::AOB
 {
 
-	// A function pattern that needs more than one string. followRel32At >= 0
+	// A function pattern for the build this plugin was compiled against; the
+	// loader's map carries the function for every other build. followRel32At >= 0
 	// anchors it on a call to the function rather than its entry: the match is
-	// the call site and the rel32 at that offset gives the function. A list of
-	// them carries a function across a game update that changed its code, one
-	// pattern per build, the build players have now first. ResolveFunction
-	// resolves the first that matches exactly once at a function entry.
+	// the call site and the rel32 at that offset gives the function.
 	struct FunctionPattern
 	{
 		const char* pattern;
@@ -84,9 +82,8 @@ namespace BetterCheats::AOB
 	// Formerly GetResourceConditionResult — renamed by the game, same contract.
 	// Found through its call site (the call at +3), which is the same on the
 	// current build and CL-128786; the function's own entry differs between them.
-	constexpr FunctionPattern GetPlacementResourceConditionResult[] = {
-		{ "48 8B C8 E8 ?? ?? ?? ?? 0F B6 D8 88 9F ?? ?? 00 00", 3 },
-	};
+	constexpr FunctionPattern GetPlacementResourceConditionResult =
+		{ "48 8B C8 E8 ?? ?? ?? ?? 0F B6 D8 88 9F ?? ?? 00 00", 3 };
 
 	// Class::Function  UAuActorPlacementComponent::AddPoint
 	// Parameters       (UAuActorPlacementComponent* this) -> FScriptContainerElement*
@@ -113,13 +110,10 @@ namespace BetterCheats::AOB
 	// just re-compiled: the frame grew past 0x80, so `sub rsp, imm8` became
 	// `sub rsp, imm32`, and the two argument moves swapped registers. The old
 	// pattern pinned both the imm8 encoding and the modrm bytes of those moves,
-	// which is why it stopped matching. The frame size is wildcarded. CL-128786
-	// re-allocated its registers again, so the second pattern is that build's;
-	// it matches nothing on the current build.
-	constexpr FunctionPattern CheckStability_Custom[] = {
-		{ "40 53 57 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F9 48 85 D2 75 ?? 32 C0" },
-		{ "40 53 55 56 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F1" },
-	};
+	// which is why it stopped matching. The frame size is wildcarded. The loader's
+	// map carries the function on the builds whose code differs.
+	constexpr FunctionPattern CheckStability_Custom =
+		{ "40 53 57 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F9 48 85 D2 75 ?? 32 C0" };
 
 
 	// Class::Function  ACrAPHelperDynamicPillar::CheckStability
@@ -135,12 +129,9 @@ namespace BetterCheats::AOB
 	// code, but rbx was re-allocated to rsi, so the push/pop and the `this` move
 	// all changed bytes. The register bytes and the member offset are wildcarded;
 	// the two register saves after the early-out keep the match unique. The
-	// second pattern is CL-128786's, whose code differs; it matches nothing on
-	// the current build.
-	constexpr FunctionPattern CheckStability_DynamicPillar[] = {
-		{ "40 56 48 83 EC ?? 48 83 B9 ?? ?? ?? ?? ?? 48 8B F1 75 ?? 32 C0" },
-		{ "48 89 74 24 18 57 48 83 EC 60 48 8B F1 E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 48 83 BE ?? ?? ?? ?? 00" },
-	};
+	// loader's map carries the function on the builds whose code differs.
+	constexpr FunctionPattern CheckStability_DynamicPillar =
+		{ "40 56 48 83 EC ?? 48 83 B9 ?? ?? ?? ?? ?? 48 8B F1 75 ?? 32 C0" };
 
 
 	// Class::Function  ACrTechnologyKeeper::CheckAvailableBuildings
@@ -349,9 +340,8 @@ namespace BetterCheats::AOB
 	// HandleOnInventorySizeChanged, so it runs each time the grid is drawn or
 	// rebuilt. Found through a tail call to it (the jmp at +24) in a caller that
 	// is the same on the current build and CL-128786.
-	constexpr FunctionPattern InventoryContainer_InitInventorySlots[] = {
-		{ "48 8B 89 60 04 00 00 48 8B 01 FF 90 10 03 00 00 48 8B CB 48 83 C4 20 5B E9", 24 },
-	};
+	constexpr FunctionPattern InventoryContainer_InitInventorySlots =
+		{ "48 8B 89 60 04 00 00 48 8B 01 FF 90 10 03 00 00 48 8B CB 48 83 C4 20 5B E9", 24 };
 
 	// Class::Function  UE::StructUtils::GetStructInstanceCrc32
 	// Parameters       (const UScriptStruct* ScriptStruct, const uint8* StructMemory, uint32 CRC) -> uint32
