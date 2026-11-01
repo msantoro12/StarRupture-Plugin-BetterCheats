@@ -651,7 +651,7 @@ namespace BetterCheats::Panels::Weapons
 			if (actor->bActorIsBeingDestroyed)
 				return false;
 			static SDK::UClass* massClass = SDK::AMassEnemyCharacterBase::StaticClass();
-			if (massClass && actor->IsA(massClass) && static_cast<SDK::AMassEnemyCharacterBase*>(actor)->bIsInPool)
+			if (massClass && actor->IsA(massClass) && BetterCheats::Fields::ValueOr(BetterCheats::Fields::MassEnemyCharacterBase_bIsInPool, static_cast<SDK::AMassEnemyCharacterBase*>(actor)))
 				return false;
 			return true;
 		}
@@ -708,7 +708,7 @@ namespace BetterCheats::Panels::Weapons
 			g_hitActive       = true;
 			g_hitMinEnd       = kHitDefaultFuse + kHitAfterFuse;
 			g_hitSelfHave     = selfHealth != nullptr;
-			g_hitSelfBefore   = g_hitSelfLast = g_hitSelfMin = selfHealth ? selfHealth->CurrentHealth.CurrentValue : 0.0f;
+			g_hitSelfBefore   = g_hitSelfLast = g_hitSelfMin = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrHealthAttributeSet_CurrentHealth, selfHealth);
 			g_hitScale        = scale;
 			g_hitBaseDamage   = baseDamage;
 			g_hitElapsed      = 0.0f;
@@ -751,7 +751,7 @@ namespace BetterCheats::Panels::Weapons
 
 				if (selfHealth && g_hitSelfHave)
 				{
-					g_hitSelfLast = selfHealth->CurrentHealth.CurrentValue;
+					g_hitSelfLast = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrHealthAttributeSet_CurrentHealth, selfHealth);
 					g_hitSelfMin  = (std::min)(g_hitSelfMin, g_hitSelfLast);
 				}
 
@@ -1270,7 +1270,7 @@ namespace BetterCheats::Panels::Weapons
 
 			int gained = 0;
 			for (int32_t i = 0; i < added.Num(); ++i)
-				gained += added[i].Amount;
+				gained += BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuAddedItem_Amount, &added[i]);
 
 			// Backstop for what the delta rule cannot see: if adds are not landing at
 			// all, stop rather than trying harder. A feature that quietly does nothing

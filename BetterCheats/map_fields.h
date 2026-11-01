@@ -99,6 +99,10 @@ namespace BetterCheats::Fields
 	inline auto CrEnviroWaveTimerSubsystem_bPause              = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bPause, 0x81);
 	inline auto CrEnviroWaveTimerSubsystem_bStopWaves          = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bStopWaves, 0x83);
 
+	// FMassEnemyHealthFragment: a Mass fragment, not a UObject, so Dumper-7 pads it out as
+	// unnamed bytes and HP (the first member) has no name in the SDK. Confirmed from the PDB.
+	inline auto MassEnemyHealthFragment_HP = BC_NATIVE(float, FMassEnemyHealthFragment, HP, 0x0);
+
 	// UCrUW_InventoryContainer: a private TWeakObjectPtr<UCrInventoryComponent>
 	inline auto CrUW_InventoryContainer_InventoryComponent = BC_NATIVE(SDK::FWeakObjectPtr, UCrUW_InventoryContainer, InventoryComponent, 0x468);
 
@@ -278,7 +282,8 @@ namespace BetterCheats::Fields
 	// ACrAPHelper
 	inline auto CrAPHelper_BuildingData = BC_FIELD(ACrAPHelper, BuildingData);
 	// Absent on some builds (CL-128786 has no such member): found by name on first
-	// use, null there, and the one feature that reads it turns itself off.
+	// use, null there, and the one feature that reads it (Features::BuildAnywhere,
+	// "Place windows and benches anywhere") leaves collision alone.
 	inline PluginLazyField<SDK::TArray<SDK::AActor*>> CrAPHelper_SnappedActors{ "SnappedActors" };
 
 	// ACrPlayerControllerBase
@@ -321,12 +326,7 @@ namespace BetterCheats::Fields
 	inline auto CrElectricityParameters_Size = SR_SIZE_CHECK(FCrElectricityParameters);
 
 	// The member's value, or a default when the object is null or the member did not resolve.
-	template <class T, class Object>
-	T ValueOr(const PluginField<T>& field, const Object* object, T fallback = T{})
-	{
-		const T* at = field.In(static_cast<const void*>(object));
-		return at ? *at : fallback;
-	}
+	using PluginMap::ValueOr;
 
 	// The Value of a FScalableFloat member, or null when the object is null or the member did not resolve.
 	// FScalableFloat itself is an engine type, so its own layout stays compiled in.
@@ -403,6 +403,7 @@ namespace BetterCheats::Fields
 			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings,
 			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
 			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
+			MassEnemyHealthFragment_HP,
 			AuAddedItem_Size, CrSkillData_Size, CrElectricityParameters_Size,
 			CrCharacterPlayerBase_ADSMoveSpeed, CrCharacterPlayerBase_AccelerationAndDeceleration, CrCharacterPlayerBase_CrouchedMoveSpeed,
 			CrCharacterPlayerBase_DoubleJumpEnergyUsage, CrCharacterPlayerBase_DurationOfAccelerationToSprint, CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint,
@@ -461,6 +462,185 @@ namespace BetterCheats::Fields
 			CrGameStateBase_TechnologyKeeper, CrCorporationsOwner_DataPoints, CrEnviroWaveTimerSubsystem_TimerActor,
 			CrWaveTimerActor_bPause
 		) && all;
+		all = PluginMap::ResolveMassEntityManager(scanner, self) && all;
 		return all;
+	}
+}
+
+// The parts of the plugin that can be off while the rest runs, grouped by the
+// cheat panel a player sees. A feature lists the loader keys its code reads:
+// the fields above (by key) and the functions aob_resolver.cpp resolves. When
+// the loader cannot resolve one of them on the running game build, it turns
+// that feature off and keeps the plugin; any key not listed here still refuses
+// the plugin. The entry points of an off feature (Initialize, Tick, ApplySavedConfig,
+// RenderImGui, Shutdown) return before touching a key, and its menu page says so.
+// The cheat settings live in the in-game menu and the per-session JSON, not on
+// the loader's config page, so no feature lists a config key.
+namespace BetterCheats::Features
+{
+	inline PluginMap::Feature Stats{ "player-stats", "Health, energy and survival cheats", {
+		"UCrUW_HealthHud::SetupProgressBar", Fields::CrCharacterPlayerBase_HealthAttributes.key,
+		Fields::CrCharacterPlayerBase_EnergyAttributes.key, Fields::CrCharacterPlayerBase_ShieldAttributes.key,
+		Fields::CrCharacterPlayerBase_HydrationAttributes.key, Fields::CrCharacterPlayerBase_CaloriesAttributes.key,
+		Fields::CrCharacterPlayerBase_OxygenAttributes.key, Fields::CrCharacterPlayerBase_ToxicityAttributes.key,
+		Fields::CrCharacterPlayerBase_RadiationAttributes.key, Fields::CrCharacterPlayerBase_HeatAttributes.key,
+		Fields::CrCharacterPlayerBase_DrainAttributes.key, Fields::CrCharacterPlayerBase_CorrosionAttributes.key,
+		Fields::CrCharacterPlayerBase_InfectionAttributes.key, Fields::CrCharacterPlayerBase_TemperatureAttributes.key,
+		Fields::CrEnergyAttributeSet_CurrentEnergy.key, Fields::CrEnergyAttributeSet_MaxEnergy.key,
+		Fields::CrShieldAttributeSet_CurrentShield.key, Fields::CrShieldAttributeSet_MaxShield.key,
+		Fields::CrHydrationAttributeSet_CurrentHydration.key, Fields::CrHydrationAttributeSet_MaxHydration.key,
+		Fields::CrCaloriesAttributeSet_CurrentCalories.key, Fields::CrCaloriesAttributeSet_MaxCalories.key,
+		Fields::CrOxygenAttributeSet_CurrentOxygen.key, Fields::CrOxygenAttributeSet_MaxOxygen.key,
+		Fields::CrToxicityAttributeSet_CurrentToxicity.key, Fields::CrToxicityAttributeSet_MaxToxicity.key,
+		Fields::CrToxicityAttributeSet_MinToxicity.key, Fields::CrRadiationAttributeSet_CurrentRadiation.key,
+		Fields::CrRadiationAttributeSet_MaxRadiation.key, Fields::CrRadiationAttributeSet_MinRadiation.key,
+		Fields::CrHeatAttributeSet_CurrentHeat.key, Fields::CrHeatAttributeSet_MaxHeat.key,
+		Fields::CrHeatAttributeSet_MinHeat.key, Fields::CrDrainAttributeSet_CurrentDrain.key,
+		Fields::CrDrainAttributeSet_MaxDrain.key, Fields::CrDrainAttributeSet_MinDrain.key,
+		Fields::CrCorrosionAttributeSet_CurrentCorrosion.key, Fields::CrCorrosionAttributeSet_MaxCorrosion.key,
+		Fields::CrCorrosionAttributeSet_MinCorrosion.key, Fields::CrInfectionAttributeSet_CurrentInfection.key,
+		Fields::CrInfectionAttributeSet_MaxInfection.key, Fields::CrInfectionAttributeSet_MinInfection.key,
+		Fields::CrTemperatureAttributeSet_CurrentTemperature.key, Fields::CrTemperatureAttributeSet_MaxTemperature.key,
+		Fields::CrTemperatureAttributeSet_MinTemperature.key, Fields::CrHealthAttributeSet_CurrentHealth.key,
+		Fields::CrHealthAttributeSet_MaxHealth.key
+	} };
+
+	inline PluginMap::Feature Movement{ "movement", "Movement tuning", {
+		Fields::CrCharacterPlayerBase_ADSMoveSpeed.key, Fields::CrCharacterPlayerBase_AccelerationAndDeceleration.key,
+		Fields::CrCharacterPlayerBase_CrouchedMoveSpeed.key, Fields::CrCharacterPlayerBase_DoubleJumpEnergyUsage.key,
+		Fields::CrCharacterPlayerBase_DurationOfAccelerationToSprint.key, Fields::CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint.key,
+		Fields::CrCharacterPlayerBase_NormalEnergyRestorationRate.key, Fields::CrCharacterPlayerBase_NormalMoveSpeed.key,
+		Fields::CrCharacterPlayerBase_SprintMoveSpeed.key, Fields::CrCharacterMovementComponent_CoyoteTime.key,
+		Fields::CrCharacterMovementComponent_DashCooldownSeconds.key, Fields::CrCharacterMovementComponent_DashDuration.key,
+		Fields::CrCharacterMovementComponent_DashEnergyCostBase.key, Fields::CrCharacterMovementComponent_DefaultZiplineAcceleration.key,
+		Fields::CrCharacterMovementComponent_DefaultZiplineSpeed.key, Fields::CrCharacterMovementComponent_JumpEnergyCost.key,
+		Fields::CrCharacterMovementComponent_MaxDashDistance.key, Fields::CrCharacterMovementComponent_MaxSlideSpeed.key,
+		Fields::CrCharacterMovementComponent_SlideEnterImpulse.key, Fields::CrCharacterMovementComponent_SlideFrictionFactor.key,
+		Fields::CrCharacterMovementComponent_SlideGravityForce.key, Fields::CrGemAttributeSet_DodgeCostMultiplier.key,
+		Fields::CrGemAttributeSet_DoubleJumpCostMultiplier.key, Fields::CrGemAttributeSet_FallDamageMultiplier.key,
+		Fields::CrGemAttributeSet_SlideStaminaRegenMultiplier.key, Fields::CrGemAttributeSet_StaminaRegenMultiplier.key,
+		Fields::CrGemAttributeSet_ZiplineSpeedMultiplier.key, Fields::CrMovementAttributeSet_JumpMultiplier.key,
+		Fields::CrMovementAttributeSet_SprintSpeedMultiplier.key, Fields::CrMovementSpeedMultiplierAttributeSet_CurrentMovementSpeedMultiplier.key,
+		Fields::CrMovementSpeedMultiplierAttributeSet_MaxMovementSpeedMultiplier.key, Fields::CrMovementSpeedMultiplierAttributeSet_MinMovementSpeedMultiplier.key,
+		Fields::CrCharacterPlayerBase_GemAttributes.key, Fields::CrCharacterPlayerBase_MovementAttributes.key,
+		Fields::CrCharacterPlayerBase_MovementSpeedMultiplierAttributes.key, Fields::CrCharacterPlayerBase_EnergyLogicComponent.key,
+		Fields::CrCharacterPlayerBase_CrCharacterMovementComponent.key, Fields::CrCharacterPlayerBase_EnergyAttributes.key,
+		Fields::CrEnergyAttributeSet_CurrentEnergy.key, Fields::CrEnergyAttributeSet_MaxEnergy.key,
+		Fields::CrCharacterMovementComponent_MaxAirDashesToExecute.key, Fields::CrEnergyLogicComponent_DelayBeforeEnergyRegeneration.key
+	} };
+
+	inline PluginMap::Feature Weapons{ "weapons", "Weapon and grenade tuning", {
+		"UAuItemsComponent::AddNewItem", Fields::CrWeaponAttributeSet_ADS_TransitionSpeedModMultiplier.key,
+		Fields::CrWeaponAttributeSet_DamageFallOffModMultiplier.key, Fields::CrWeaponAttributeSet_DamageModMultiplier.key,
+		Fields::CrWeaponAttributeSet_FireRateModMultiplier.key, Fields::CrWeaponAttributeSet_MaxMagAmmoModOffset.key,
+		Fields::CrWeaponAttributeSet_PossibleEnemiesHitPerTrace.key, Fields::CrWeaponAttributeSet_RecoilModMultiplier.key,
+		Fields::CrWeaponAttributeSet_ReloadSpeedModMultiplier.key, Fields::CrWeaponAttributeSet_SpreadModMultiplier.key,
+		Fields::CrWeaponAttributeSet_SwayModMultiplier.key, Fields::CrCharacterPlayerBase_InventoryComponent.key,
+		Fields::CrCharacterPlayerBase_HiddenInventoryComponent.key, Fields::CrCharacterPlayerBase_WeaponSystem.key,
+		Fields::CrCharacterPlayerBase_WeaponAttributes.key, Fields::CrCharacterPlayerBase_GrenadeChargeAttributes.key,
+		Fields::CrCharacterPlayerBase_HealthAttributes.key, Fields::CrHealthAttributeSet_CurrentHealth.key,
+		Fields::CrHealthAttributeSet_MaxHealth.key, Fields::CrGrenadeChargeAttributeSet_CurrentGrenadeCharge.key,
+		Fields::CrGrenadeChargeAttributeSet_MaxGrenadeCharge.key, Fields::CrGrenadeChargeAttributeSet_MinGrenadeCharge.key,
+		Fields::CrAIBase_BaseAttributes.key, Fields::CrWeaponComponent_LastEquippedWeaponData.key,
+		Fields::AuWeaponItemDataBase_BaseDamage.key, Fields::AuWeaponItemDataBase_BaseRange.key,
+		Fields::AuWeaponItemDataBase_RoundsPerMinute.key, Fields::AuWeaponItemDataBase_BaseMagazine.key,
+		Fields::AuWeaponItemDataBase_BaseDamageFalloff.key, Fields::AuWeaponItemDataBase_ReloadTime.key,
+		Fields::AuWeaponItemDataBase_Spread.key, Fields::AuWeaponItemDataBase_AimCameraSpeed.key,
+		Fields::AuWeaponItemDataBase_RequiredItem.key, Fields::CrWeaponItemDataBase_PossibleEnemiesHitPerTrace.key,
+		Fields::CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge.key, Fields::CrWeaponModDataAsset_BaseDamageFalloffCurveOverride.key,
+		Fields::AuWeaponItemDataBase_bIsUsingDamageFalloff.key, Fields::MassEnemyCharacterBase_bIsInPool.key,
+		Fields::MassEnemyHealthFragment_HP.key, Fields::AuAddedItem_Amount.key, Fields::AuAddedItem_Size.key
+	} };
+
+	inline PluginMap::Feature Mining{ "mining-tools", "Mining tool tuning", {
+		"UCrMiningToolComponent::GetMiningDamage", Fields::CrWeaponAttributeSet_DamageModMultiplier.key,
+		Fields::CrWeaponAttributeSet_FireRateModMultiplier.key, Fields::CrCharacterPlayerBase_WeaponSystem.key,
+		Fields::CrCharacterPlayerBase_WeaponAttributes.key, Fields::CrCharacterPlayerBase_MiningBoostAttributes.key,
+		Fields::CrMiningBoostAttributeSet_CurrentBoostMultiplierValue.key, Fields::CrMiningBoostAttributeSet_MaxBoostMultiplierValue.key,
+		Fields::CrWeaponAttributeSet_AggroPerShotModMultiplier.key, Fields::CrWeaponComponent_LastEquippedWeaponData.key,
+		Fields::AuWeaponItemDataBase_BaseDamage.key, Fields::AuWeaponItemDataBase_BaseRange.key,
+		Fields::AuWeaponItemDataBase_RoundsPerMinute.key, Fields::CrWeaponItemDataBase_MiningTypeDamage.key,
+		Fields::CrWeaponItemDataBase_WeakpointDamageMultiplier.key, Fields::CrWeaponItemDataBase_ShotAggro.key
+	} };
+
+	inline PluginMap::Feature Inventory{ "inventory", "Inventory size and stack limits", {
+		"UCrUW_InventoryContainer::InitInventorySlots", Fields::CrUW_InventoryContainer_InventoryComponent.key,
+		Fields::CrCharacterPlayerBase_InventoryComponent.key, Fields::CrInventoryComponent_GridColumns.key,
+		Fields::CrInventoryComponent_GridRows.key, Fields::CrUW_InventoryContainer_ItemGridPanel.key,
+		Fields::AuItemDataBase_MaxStack.key, Fields::AuItemDataBase_StackingType.key,
+		Fields::AuItemDataBase_UIItemType.key, Fields::CrGatherableBaseActor_ResourceCount.key,
+		Fields::CrInventoryComponent_Slots.key, Fields::AuItemDataBase_UniqueItemName.key,
+		Fields::AuItemDataBase_ItemName.key
+	} };
+
+	inline PluginMap::Feature Items{ "item-spawner", "Item spawner", {
+		"UAuItemsComponent::AddNewItem", Fields::CrCharacterPlayerBase_InventoryComponent.key,
+		Fields::AuItemDataBase_MaxStack.key, Fields::AuItemDataBase_ItemIcon.key,
+		Fields::AuAddedItem_Amount.key, Fields::AuItemDataBase_UniqueItemName.key,
+		Fields::AuItemDataBase_ItemName.key, Fields::AuAddedItem_Size.key
+	} };
+
+	inline PluginMap::Feature Skills{ "skills", "Skill levels", {
+		Fields::CrPlayerControllerBase_PlayerSkills.key, Fields::CrSkillData_Skill.key,
+		Fields::CrSkillData_Level.key, Fields::CrSkillData_Experience.key,
+		Fields::CrSkillData_Size.key
+	} };
+
+	inline PluginMap::Feature BuildFree{ "build-free", "Build without cost or stability checks", {
+		"UCrBuildingComponent::GetPlacementResourceConditionResult", "ACrAPHelperActorCustom::CheckStability",
+		"ACrAPHelperDynamicPillar::CheckStability"
+	} };
+
+	inline PluginMap::Feature BuildUnlock{ "build-unlock", "Unlock all buildings and recipes", {
+		"ACrTechnologyKeeper::CheckAvailableBuildings", "ACrCraftingRecipeOwner::IsRecipeUnlocked",
+		Fields::CrTechnologyKeeper_bUnlockAllBuildings.key, Fields::CrGameStateBase_TechnologyKeeper.key
+	} };
+
+	inline PluginMap::Feature BuildAnywhere{ "build-anywhere", "Place windows and benches anywhere", {
+		Fields::CrAPHelper_BuildingData.key, Fields::AuActorPlacementData_BuildingID.key
+	} };
+
+	inline PluginMap::Feature Enemies{ "enemies", "Enemy tuning", {
+		"FWeakObjectPtr::operator=(FObjectPtr)", "UMassActorSubsystem::GetEntityHandleFromActor",
+		"FMassEntityManager::InternalGetFragmentDataPtr", PluginMap::MassEntityManagerField.key,
+		Fields::MassEnemyCharacterBase_bIsInPool.key,
+		Fields::MassEnemyCharacterBase_AllowedAttackDistance.key, Fields::MassEnemyCharacterBase_AllowedAttackConeHalfAngle.key,
+		Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance.key, Fields::MassEnemyHealthFragment_HP.key
+	} };
+
+	inline PluginMap::Feature Power{ "machine-power", "Machine power", {
+		"FMassEntityConfig::DestroyEntityTemplate", "FMassEntityConfig::GetOrCreateEntityTemplate",
+		"UWorld::GetSubsystem<UMassEntitySubsystem>", "TSharedFragmentsContainer<FConstSharedStruct>::FindOrAdd",
+		"UE::StructUtils::GetStructInstanceCrc32", Fields::CrElectricityTrait_Parameters.key,
+		Fields::CrElectricityParameters_ElectricityValue.key, Fields::CrElectricityParameters_Type.key,
+		Fields::AuActorPlacementData_EntityType.key, Fields::AuAPMassSpawnedEntityType_EntityConfig.key,
+		Fields::CrBuildingData_BuildingName.key, Fields::CrElectricityParameters_Size.key,
+		PluginMap::MassEntityManagerField.key
+	} };
+
+	inline PluginMap::Feature Corporations{ "corporations", "Corporation data points", {
+		Fields::CrGameStateBase_CorporationsOwner.key, Fields::CrCorporationsOwner_DataPoints.key
+	} };
+
+	inline PluginMap::Feature Wave{ "rupture-wave", "Rupture wave timer", {
+		Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer.key, Fields::CrEnviroWaveTimerSubsystem_bWaitingForNextWave.key,
+		Fields::CrEnviroWaveTimerSubsystem_bPause.key, Fields::CrEnviroWaveTimerSubsystem_bStopWaves.key,
+		Fields::CrEnviroWaveTimerSubsystem_TimerActor.key, Fields::CrWaveTimerActor_bPause.key
+	} };
+
+	// Declares every feature. Call before the resolves, so a miss lands on the
+	// feature, not on the plugin.
+	inline bool Declare(IPluginSelf* self, IPluginHookScanner* scanner)
+	{
+		return PluginMap::DeclareFeatures(scanner, self,
+			Stats, Movement, Weapons, Mining, Inventory, Items, Skills,
+			BuildFree, BuildUnlock, BuildAnywhere, Enemies, Power, Corporations, Wave);
+	}
+
+	// What an off feature shows in place of its menu page.
+	inline void RenderOff(IModLoaderImGui* imgui, const PluginMap::Feature& feature)
+	{
+		imgui->SeparatorText(feature.title);
+		imgui->TextDisabled("Off: this game build changed something it needs. See the loader's hook report.");
 	}
 }
