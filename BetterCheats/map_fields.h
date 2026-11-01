@@ -103,6 +103,10 @@ namespace BetterCheats::Fields
 	// unnamed bytes and HP (the first member) has no name in the SDK. Confirmed from the PDB.
 	inline auto MassEnemyHealthFragment_HP = BC_NATIVE(float, FMassEnemyHealthFragment, HP, 0x0);
 
+	// FStructSharedMemory: the shared struct's data follows its UScriptStruct*. A MassEntity type the
+	// SDK does not dump, so a native member; the payload's first byte stands for the whole struct.
+	inline auto StructSharedMemory_Payload = BC_NATIVE(uint8_t, FStructSharedMemory, Payload, 0x8);
+
 	// UCrUW_InventoryContainer: a private TWeakObjectPtr<UCrInventoryComponent>
 	inline auto CrUW_InventoryContainer_InventoryComponent = BC_NATIVE(SDK::FWeakObjectPtr, UCrUW_InventoryContainer, InventoryComponent, 0x468);
 
@@ -326,12 +330,7 @@ namespace BetterCheats::Fields
 	inline auto CrElectricityParameters_Size = SR_SIZE_CHECK(FCrElectricityParameters);
 
 	// The member's value, or a default when the object is null or the member did not resolve.
-	template <class T, class Object>
-	T ValueOr(const PluginField<T>& field, const Object* object, T fallback = T{})
-	{
-		const T* at = field.In(static_cast<const void*>(object));
-		return at ? *at : fallback;
-	}
+	using PluginMap::ValueOr;
 
 	// The Value of a FScalableFloat member, or null when the object is null or the member did not resolve.
 	// FScalableFloat itself is an engine type, so its own layout stays compiled in.
@@ -408,7 +407,7 @@ namespace BetterCheats::Fields
 			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings,
 			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
 			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
-			MassEnemyHealthFragment_HP,
+			MassEnemyHealthFragment_HP, StructSharedMemory_Payload,
 			AuAddedItem_Size, CrSkillData_Size, CrElectricityParameters_Size,
 			CrCharacterPlayerBase_ADSMoveSpeed, CrCharacterPlayerBase_AccelerationAndDeceleration, CrCharacterPlayerBase_CrouchedMoveSpeed,
 			CrCharacterPlayerBase_DoubleJumpEnergyUsage, CrCharacterPlayerBase_DurationOfAccelerationToSprint, CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint,
@@ -467,6 +466,7 @@ namespace BetterCheats::Fields
 			CrGameStateBase_TechnologyKeeper, CrCorporationsOwner_DataPoints, CrEnviroWaveTimerSubsystem_TimerActor,
 			CrWaveTimerActor_bPause
 		) && all;
+		all = PluginMap::ResolveMassEntityManager(scanner, self) && all;
 		return all;
 	}
 }
@@ -606,7 +606,8 @@ namespace BetterCheats::Features
 
 	inline PluginMap::Feature Enemies{ "enemies", "Enemy tuning", {
 		"FWeakObjectPtr::operator=(FObjectPtr)", "UMassActorSubsystem::GetEntityHandleFromActor",
-		"FMassEntityManager::InternalGetFragmentDataPtr", Fields::MassEnemyCharacterBase_bIsInPool.key,
+		"FMassEntityManager::InternalGetFragmentDataPtr", PluginMap::MassEntityManagerField.key,
+		Fields::MassEnemyCharacterBase_bIsInPool.key,
 		Fields::MassEnemyCharacterBase_AllowedAttackDistance.key, Fields::MassEnemyCharacterBase_AllowedAttackConeHalfAngle.key,
 		Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance.key, Fields::MassEnemyHealthFragment_HP.key
 	} };
@@ -617,7 +618,8 @@ namespace BetterCheats::Features
 		"UE::StructUtils::GetStructInstanceCrc32", Fields::CrElectricityTrait_Parameters.key,
 		Fields::CrElectricityParameters_ElectricityValue.key, Fields::CrElectricityParameters_Type.key,
 		Fields::AuActorPlacementData_EntityType.key, Fields::AuAPMassSpawnedEntityType_EntityConfig.key,
-		Fields::CrBuildingData_BuildingName.key, Fields::CrElectricityParameters_Size.key
+		Fields::CrBuildingData_BuildingName.key, Fields::CrElectricityParameters_Size.key,
+		PluginMap::MassEntityManagerField.key, Fields::StructSharedMemory_Payload.key
 	} };
 
 	inline PluginMap::Feature Corporations{ "corporations", "Corporation data points", {

@@ -715,9 +715,8 @@ namespace BetterCheats::Panels::Power
 					return;
 				}
 
-				// UMassEntitySubsystem::EntityManager is a TSharedPtr<FMassEntityManager>
-				// at offset 0x38; its first 8 bytes are the raw FMassEntityManager*.
-				void* entityManager = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(massEntitySubsystem) + 0x38);
+				// The raw FMassEntityManager* inside the subsystem's TSharedPtr.
+				void* entityManager = PluginMap::MassEntityManagerOf(massEntitySubsystem);
 				if (!entityManager)
 				{
 					LOG_WARN("Power: FMassEntityManager unavailable - skipping shared-fragment patch for '%s'.", assetName);
@@ -750,9 +749,11 @@ namespace BetterCheats::Panels::Power
 					return;
 				}
 
-				auto* liveParams = reinterpret_cast<SDK::FCrElectricityParameters*>(reinterpret_cast<uint8_t*>(sharedMemory) + 0x08);
+				uint8_t* payload = BetterCheats::Fields::StructSharedMemory_Payload.In(sharedMemory);
+				if (!payload)
+					return;
 
-				float* liveValue = BetterCheats::Fields::CrElectricityParameters_ElectricityValue.In(liveParams);
+				float* liveValue = BetterCheats::Fields::CrElectricityParameters_ElectricityValue.In(payload);
 				if (!liveValue)
 					return;
 				const float before = *liveValue;

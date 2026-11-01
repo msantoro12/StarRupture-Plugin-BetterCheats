@@ -117,18 +117,6 @@ namespace BetterCheats::Panels::Enemies
 
 		void* ResolveHealthFragment(SDK::AMassEnemyCharacterBase* actor);
 
-		// The FMassEntityManager the entity subsystem owns
-		// (TSharedPtr<FMassEntityManager> at +0x38 — see UMassEntitySubsystem's
-		// layout; Dumper-7 can't reflect it since FMassEntityManager isn't a
-		// UObject, so this offset came from a PDB-backed IDA inspection, not the
-		// SDK header). Read from the live subsystem on each use, never cached, so
-		// it can't outlive the subsystem that owns it.
-		void* GetEntityManager(SDK::UMassEntitySubsystem* entitySubsystem)
-		{
-			auto* base = reinterpret_cast<uint8_t*>(entitySubsystem);
-			return *reinterpret_cast<void**>(base + 0x38);
-		}
-
 		// Re-finds the per-world UMassEntitySubsystem/UMassActorSubsystem
 		// singletons. Only ever called from Tick().
 		void RescanMassSubsystems()
@@ -250,7 +238,7 @@ namespace BetterCheats::Panels::Enemies
 
 			SDK::UMassEntitySubsystem* entitySubsystem = g_entitySubsystem.Get();
 			SDK::UMassActorSubsystem*  actorSubsystem  = g_actorSubsystem.Get();
-			void* entityManager = entitySubsystem ? GetEntityManager(entitySubsystem) : nullptr;
+			void* entityManager = PluginMap::MassEntityManagerOf(entitySubsystem);
 			if (!entityManager || !actorSubsystem)
 				return nullptr;
 
