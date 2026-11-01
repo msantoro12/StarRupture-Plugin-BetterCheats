@@ -14,6 +14,7 @@
 #include <cstring>
 #include <mutex>
 #include "plugin_map.h"
+#include "map_fields.h"
 
 namespace BetterCheats::Panels::Building
 {
@@ -84,8 +85,6 @@ namespace BetterCheats::Panels::Building
 		// so we pass nullptr/0 safely in both directions.
 		// This flag may be serialised into the save file — the UI warns accordingly.
 		// -------------------------------------------------------------------------
-
-		constexpr ptrdiff_t kBUnlockAllBuildingsOffset = 0x03A8;
 
 		bool g_unlockAllBuildings     = false;
 		bool g_prevUnlockAllBuildings = false;
@@ -673,7 +672,8 @@ namespace BetterCheats::Panels::Building
 			{
 				if (SDK::ACrTechnologyKeeper* keeper = GetTechnologyKeeper())
 				{
-					*reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(keeper) + kBUnlockAllBuildingsOffset) = false;
+					if (bool* unlockAll = BetterCheats::Fields::CrTechnologyKeeper_bUnlockAllBuildings.In(keeper))
+						*unlockAll = false;
 					if (g_checkAvailableBuildings)
 						g_checkAvailableBuildings(keeper, nullptr, 0);
 				}
@@ -702,7 +702,8 @@ namespace BetterCheats::Panels::Building
 				LOG_DEBUG("Building: TechnologyKeeper = 0x%llx", reinterpret_cast<unsigned long long>(keeper));
 				if (keeper)
 				{
-					*reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(keeper) + kBUnlockAllBuildingsOffset) = g_unlockAllBuildings;
+					if (bool* unlockAll = BetterCheats::Fields::CrTechnologyKeeper_bUnlockAllBuildings.In(keeper))
+						*unlockAll = g_unlockAllBuildings;
 					if (g_checkAvailableBuildings)
 					{
 						LOG_DEBUG("Building: calling CheckAvailableBuildings (keeper=0x%llx, bUnlockAll=%d)",

@@ -12,6 +12,12 @@
 
 #define BC_FIELD(Class, Member) SR_FIELD(decltype(SDK::Class::Member), Class, Member, 0)
 
+// A member the SDK dumps as padding, so it has no name or offset to compile in:
+// the loader's map holds it under this key, and Offset is the row for the build
+// this plugin was compiled against.
+#define BC_NATIVE(Type, Class, Member, Offset) \
+	PluginField<Type>{ { #Class "::" #Member, #Class, #Member, PLUGIN_FIELD_NATIVE, sizeof(Type), (Offset) } }
+
 namespace BetterCheats::Fields
 {
 	// ACrCharacterPlayerBase
@@ -68,11 +74,40 @@ namespace BetterCheats::Fields
 	inline auto CrWeaponAttributeSet_SpreadModMultiplier = BC_FIELD(UCrWeaponAttributeSet, SpreadModMultiplier);
 	inline auto CrWeaponAttributeSet_SwayModMultiplier = BC_FIELD(UCrWeaponAttributeSet, SwayModMultiplier);
 
+	// UCrGameInstance
+	inline auto CrGameInstance_ServerSessionName = BC_NATIVE(SDK::FString, UCrGameInstance, ServerSessionName, 0x290);
+
+	// ACrTechnologyKeeper
+	inline auto CrTechnologyKeeper_bUnlockAllBuildings = BC_NATIVE(bool, ACrTechnologyKeeper, bUnlockAllBuildings, 0x3A8);
+
+	// UCrEnviroWaveTimerSubsystem: the countdown to the next rupture. The SDK folds
+	// everything before TimerActor into Pad_30; Tick() only decrements NextWaveTimer
+	// while !bPause && bWaitingForNextWave, and the block is persisted into the save,
+	// so a bad value survives a reload.
+	inline auto CrEnviroWaveTimerSubsystem_WaitingDuration     = BC_NATIVE(float, UCrEnviroWaveTimerSubsystem, WaitingDuration, 0x78);
+	inline auto CrEnviroWaveTimerSubsystem_NextWaveTimer       = BC_NATIVE(float, UCrEnviroWaveTimerSubsystem, NextWaveTimer, 0x7C);
+	inline auto CrEnviroWaveTimerSubsystem_bWaitingForNextWave = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bWaitingForNextWave, 0x80);
+	inline auto CrEnviroWaveTimerSubsystem_bPause              = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bPause, 0x81);
+	inline auto CrEnviroWaveTimerSubsystem_bStopWaves          = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bStopWaves, 0x83);
+
+	// UCrUW_InventoryContainer: a private TWeakObjectPtr<UCrInventoryComponent>
+	inline auto CrUW_InventoryContainer_InventoryComponent = BC_NATIVE(SDK::FWeakObjectPtr, UCrUW_InventoryContainer, InventoryComponent, 0x468);
+
+	// Structs the plugin copies or indexes by value; they fail the plugin when the
+	// running build's size differs from the one compiled in.
+	inline auto AuAddedItem_Size             = SR_SIZE_CHECK(FAuAddedItem);
+	inline auto CrSkillData_Size             = SR_SIZE_CHECK(FCrSkillData);
+	inline auto CrElectricityParameters_Size = SR_SIZE_CHECK(FCrElectricityParameters);
+
 	// Asks the loader for every row above. False when any did not resolve; the
 	// loader has then recorded the failure and refuses the plugin.
 	inline bool Resolve(IPluginSelf* self, IPluginHookScanner* scanner)
 	{
 		return PluginMap::ResolveFields(scanner, self,
+			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings, CrEnviroWaveTimerSubsystem_WaitingDuration,
+			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
+			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
+			AuAddedItem_Size, CrSkillData_Size, CrElectricityParameters_Size,
 			CrCharacterPlayerBase_ADSMoveSpeed, CrCharacterPlayerBase_AccelerationAndDeceleration, CrCharacterPlayerBase_CrouchedMoveSpeed,
 			CrCharacterPlayerBase_DoubleJumpEnergyUsage, CrCharacterPlayerBase_DurationOfAccelerationToSprint, CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint,
 			CrCharacterPlayerBase_NormalEnergyRestorationRate, CrCharacterPlayerBase_NormalMoveSpeed, CrCharacterPlayerBase_SprintMoveSpeed,

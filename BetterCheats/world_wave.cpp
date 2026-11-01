@@ -2,6 +2,7 @@
 #include "plugin_helpers.h"
 #include "session_config.h"
 #include "aob_patterns.h"
+#include "map_fields.h"
 
 #include "Chimera_classes.hpp"
 
@@ -125,11 +126,19 @@ namespace BetterCheats::Panels::Wave
 		};
 
 		// The fields that drive the countdown sit inside the SDK's Pad_30 on the
-		// timer subsystem, so they are addressed by offset (see aob_patterns.h).
+		// timer subsystem, so they are map fields (see map_fields.h).
 		template <typename T>
-		T& TimerField(std::ptrdiff_t offset)
+		T TimerRead(const PluginField<T>& field, T fallback)
 		{
-			return *reinterpret_cast<T*>(reinterpret_cast<std::uint8_t*>(g_timerSubsys) + offset);
+			const T* value = field.In(g_timerSubsys);
+			return value ? *value : fallback;
+		}
+
+		template <typename T>
+		void TimerWrite(const PluginField<T>& field, T value)
+		{
+			if (T* slot = field.In(g_timerSubsys))
+				*slot = value;
 		}
 
 		// The game pushes the subsystem's bPause to the actor via
@@ -137,7 +146,7 @@ namespace BetterCheats::Panels::Wave
 		// view model, which reads the actor, agrees with the real state.
 		void WriteTimerPause(bool paused)
 		{
-			TimerField<bool>(AOB::kWaveTimerPauseOffset) = paused;
+			TimerWrite(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bPause, paused);
 			if (g_timerSubsys->TimerActor)
 				g_timerSubsys->TimerActor->bPause = paused;
 		}
@@ -169,10 +178,10 @@ namespace BetterCheats::Panels::Wave
 				snap.timerFound = true;
 				try
 				{
-					snap.waitingForNextWave = TimerField<bool>(AOB::kWaveTimerWaitingForNextWaveOffset);
-					snap.timerPaused        = TimerField<bool>(AOB::kWaveTimerPauseOffset);
-					snap.stopWaves          = TimerField<bool>(AOB::kWaveTimerStopWavesOffset);
-					snap.secondsRemaining   = TimerField<float>(AOB::kWaveTimerNextWaveTimerOffset);
+					snap.waitingForNextWave = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bWaitingForNextWave, false);
+					snap.timerPaused        = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bPause, false);
+					snap.stopWaves          = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bStopWaves, false);
+					snap.secondsRemaining   = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer, 0.0f);
 				}
 				catch (...)
 				{
@@ -234,7 +243,7 @@ namespace BetterCheats::Panels::Wave
 			if (!g_timerSubsys)
 				return;
 
-			TimerField<float>(AOB::kWaveTimerNextWaveTimerOffset) = TimerField<float>(AOB::kWaveTimerWaitingDurationOffset);
+			TimerWrite(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer, TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_WaitingDuration, 0.0f));
 			// Sets bWaitingForNextWave, clears bStopWaves and re-arms the HUD's NextTime.
 			g_timerSubsys->WavesActive(true);
 			const bool paused = g_pauseWavesEnabled.load();

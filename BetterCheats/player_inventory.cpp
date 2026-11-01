@@ -10,6 +10,7 @@
 #include "game_thread.h"
 #include "object_ref.h"
 #include "aob_resolver.h"
+#include "map_fields.h"
 
 #include "Chimera_classes.hpp"
 #include "ChimeraUI_classes.hpp"
@@ -196,13 +197,10 @@ namespace BetterCheats::Panels::Inventory
 		// InitInventorySlots opens on `lea r12, [rcx+468h]` to read it. Only the
 		// index is compared, never resolved: InitPlayer can bind the character's
 		// hidden inventory instead, and that grid is not the one being resized.
-		constexpr size_t kContainerInventoryOffset = 0x468;
-
 		bool IsBoundTo(const SDK::UCrUW_InventoryContainer* container, const SDK::UCrInventoryComponent* inv)
 		{
-			const auto* weak = reinterpret_cast<const SDK::FWeakObjectPtr*>(
-				reinterpret_cast<const uint8_t*>(container) + kContainerInventoryOffset);
-			return weak->ObjectIndex == inv->Index;
+			const SDK::FWeakObjectPtr* weak = BetterCheats::Fields::CrUW_InventoryContainer_InventoryComponent.In(container);
+			return weak && weak->ObjectIndex == inv->Index;
 		}
 
 		// The designer slot size, captured from the first slot seen before
