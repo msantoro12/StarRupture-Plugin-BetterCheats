@@ -103,10 +103,6 @@ namespace BetterCheats::Fields
 	// unnamed bytes and HP (the first member) has no name in the SDK. Confirmed from the PDB.
 	inline auto MassEnemyHealthFragment_HP = BC_NATIVE(float, FMassEnemyHealthFragment, HP, 0x0);
 
-	// FStructSharedMemory: the shared struct's data follows its UScriptStruct*. A MassEntity type the
-	// SDK does not dump, so a native member; the payload's first byte stands for the whole struct.
-	inline auto StructSharedMemory_Payload = BC_NATIVE(uint8_t, FStructSharedMemory, Payload, 0x8);
-
 	// UCrUW_InventoryContainer: a private TWeakObjectPtr<UCrInventoryComponent>
 	inline auto CrUW_InventoryContainer_InventoryComponent = BC_NATIVE(SDK::FWeakObjectPtr, UCrUW_InventoryContainer, InventoryComponent, 0x468);
 
@@ -407,7 +403,7 @@ namespace BetterCheats::Fields
 			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings,
 			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
 			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
-			MassEnemyHealthFragment_HP, StructSharedMemory_Payload,
+			MassEnemyHealthFragment_HP,
 			AuAddedItem_Size, CrSkillData_Size, CrElectricityParameters_Size,
 			CrCharacterPlayerBase_ADSMoveSpeed, CrCharacterPlayerBase_AccelerationAndDeceleration, CrCharacterPlayerBase_CrouchedMoveSpeed,
 			CrCharacterPlayerBase_DoubleJumpEnergyUsage, CrCharacterPlayerBase_DurationOfAccelerationToSprint, CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint,
@@ -619,7 +615,7 @@ namespace BetterCheats::Features
 		Fields::CrElectricityParameters_ElectricityValue.key, Fields::CrElectricityParameters_Type.key,
 		Fields::AuActorPlacementData_EntityType.key, Fields::AuAPMassSpawnedEntityType_EntityConfig.key,
 		Fields::CrBuildingData_BuildingName.key, Fields::CrElectricityParameters_Size.key,
-		PluginMap::MassEntityManagerField.key, Fields::StructSharedMemory_Payload.key
+		PluginMap::MassEntityManagerField.key
 	} };
 
 	inline PluginMap::Feature Corporations{ "corporations", "Corporation data points", {

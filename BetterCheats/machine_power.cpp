@@ -749,11 +749,9 @@ namespace BetterCheats::Panels::Power
 					return;
 				}
 
-				uint8_t* payload = BetterCheats::Fields::StructSharedMemory_Payload.In(sharedMemory);
-				if (!payload)
-					return;
+				auto* liveParams = reinterpret_cast<SDK::FCrElectricityParameters*>(reinterpret_cast<uint8_t*>(sharedMemory) + 0x08);
 
-				float* liveValue = BetterCheats::Fields::CrElectricityParameters_ElectricityValue.In(payload);
+				float* liveValue = BetterCheats::Fields::CrElectricityParameters_ElectricityValue.In(liveParams);
 				if (!liveValue)
 					return;
 				const float before = *liveValue;
