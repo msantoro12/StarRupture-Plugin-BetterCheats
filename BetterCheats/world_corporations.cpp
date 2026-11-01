@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <mutex>
 #include "plugin_map.h"
+#include "map_fields.h"
 
 namespace BetterCheats::Panels::Corporations
 {
@@ -38,7 +39,7 @@ namespace BetterCheats::Panels::Corporations
 				SDK::UClass* gameStateClass = SDK::ACrGameStateBase::StaticClass();
 				if (!gameStateClass || !world->GameState->IsA(gameStateClass)) return nullptr;
 
-				return static_cast<SDK::ACrGameStateBase*>(world->GameState)->CorporationsOwner;
+				return BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrGameStateBase_CorporationsOwner, static_cast<SDK::ACrGameStateBase*>(world->GameState));
 			}
 			catch (...)
 			{
@@ -52,7 +53,7 @@ namespace BetterCheats::Panels::Corporations
 			if (SDK::ACrCorporationsOwner* owner = GetCorporationsOwner())
 			{
 				snap.ownerFound = true;
-				snap.dataPoints = owner->DataPoints;
+				snap.dataPoints = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCorporationsOwner_DataPoints, owner);
 			}
 
 			std::lock_guard<std::mutex> lock(g_snapshotMutex);
@@ -74,7 +75,7 @@ namespace BetterCheats::Panels::Corporations
 			try
 			{
 				if (SDK::ACrCorporationsOwner* owner = GetCorporationsOwner())
-					owner->DataPoints = g_pendingValue.load();
+					BetterCheats::Fields::Store(BetterCheats::Fields::CrCorporationsOwner_DataPoints, owner, static_cast<int32_t>(g_pendingValue.load()));
 			}
 			catch (...)
 			{

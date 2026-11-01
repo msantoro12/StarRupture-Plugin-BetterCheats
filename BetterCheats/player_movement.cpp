@@ -501,17 +501,17 @@ namespace BetterCheats::Panels::Movement
 		{
 			try
 			{
-				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
+				if (SDK::UCrMovementAttributeSet* set = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_MovementAttributes, character))
 					for (const MoveBinding& b : kMoveBindings)
 						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
 							ApplyAttrRow(set, *attr, b.attr);
 
-				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
+				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_MovementSpeedMultiplierAttributes, character))
 					for (const SpeedBinding& b : kSpeedBindings)
 						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
 							ApplyAttrRow(set, *attr, b.attr);
 
-				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
+				if (SDK::UCrGemAttributeSet* set = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_GemAttributes, character))
 					for (const GemBinding& b : kGemBindings)
 						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
 							ApplyAttrRow(set, *attr, b.attr);
@@ -706,7 +706,7 @@ namespace BetterCheats::Panels::Movement
 		{
 			if (g_rawBaselineReady.load()) return;
 
-			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
+			SDK::UCrCharacterMovementComponent* move = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_CrCharacterMovementComponent, character);
 			if (!move) return;
 
 			for (int i = 0; i < kCompBindCount; ++i)
@@ -717,13 +717,13 @@ namespace BetterCheats::Panels::Movement
 				if (float* slot = kCharBinds[i].field->In(character))
 					g_rawBaseline[kCharBinds[i].raw].store(*slot);
 
-			g_rawBaseline[kRawAirDashes].store(static_cast<float>(move->MaxAirDashesToExecute));
+			g_rawBaseline[kRawAirDashes].store(static_cast<float>(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterMovementComponent_MaxAirDashesToExecute, move)));
 
 			// Max Energy has no baseline of its own to capture -- it composes onto
 			// the game's live value instead (see g_composedMaxEnergy).
 
-			if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
-				g_rawBaseline[kRawRegenDelay].store(logic->DelayBeforeEnergyRegeneration);
+			if (const float* delay = BetterCheats::Fields::CrEnergyLogicComponent_DelayBeforeEnergyRegeneration.In(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_EnergyLogicComponent, character)))
+				g_rawBaseline[kRawRegenDelay].store(*delay);
 
 			g_rawBaselineReady.store(true);
 
@@ -753,7 +753,7 @@ namespace BetterCheats::Panels::Movement
 			// speed by 0.0, which looks exactly like the game freezing.
 			if (!g_rawBaselineReady.load() || !g_rawValuesInit.load()) return;
 
-			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
+			SDK::UCrCharacterMovementComponent* move = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_CrCharacterMovementComponent, character);
 			if (!move) return;
 
 			// Live-values block: read regardless of which rows are active, so the
@@ -800,11 +800,12 @@ namespace BetterCheats::Panels::Movement
 
 			{
 				const bool  active      = IsRawActive(kRawAirDashes);
-				const float gameBefore  = static_cast<float>(move->MaxAirDashesToExecute);
+				const float gameBefore  = static_cast<float>(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterMovementComponent_MaxAirDashesToExecute, move));
 				const float want        = g_rawBaseline[kRawAirDashes].load() * SafeMultiplier(kRawAirDashes);
 				const int   wantInt     = static_cast<int>(want + 0.5f);
-				if (active && move->MaxAirDashesToExecute != wantInt)
-					move->MaxAirDashesToExecute = wantInt;
+				int* airDashes = BetterCheats::Fields::CrCharacterMovementComponent_MaxAirDashesToExecute.In(move);
+				if (active && airDashes && *airDashes != wantInt)
+					*airDashes = wantInt;
 				g_dbgRawGame[kRawAirDashes].store(gameBefore);
 				g_dbgRawExpected[kRawAirDashes].store(active ? want : gameBefore);
 			}
@@ -812,34 +813,38 @@ namespace BetterCheats::Panels::Movement
 			// Max Energy composes onto the live game value instead of a captured
 			// baseline (see g_composedMaxEnergy) -- ComposedAttribute::Apply/Release
 			// already compare before writing.
-			if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
+			SDK::UCrEnergyAttributeSet* energy = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_EnergyAttributes, character);
+			SDK::FGameplayAttributeData* maxEnergy     = BetterCheats::Fields::CrEnergyAttributeSet_MaxEnergy.In(energy);
+			SDK::FGameplayAttributeData* currentEnergy = BetterCheats::Fields::CrEnergyAttributeSet_CurrentEnergy.In(energy);
+			if (maxEnergy && currentEnergy)
 			{
 				const bool active = IsRawActive(kRawMaxEnergy);
 				const BetterCheats::ComposeStep step = BetterCheats::ApplyComposedRow(g_composedMaxEnergy, energy,
-					energy->MaxEnergy.CurrentValue, "playerMovement.compose.maxEnergy", active,
+					maxEnergy->CurrentValue, "playerMovement.compose.maxEnergy", active,
 					SafeMultiplier(kRawMaxEnergy), BetterCheats::ComposedAttribute::Mode::Multiply,
-					kMaxEnergyFloor, kMaxEnergyCeiling, &energy->MaxEnergy.BaseValue);
+					kMaxEnergyFloor, kMaxEnergyCeiling, &maxEnergy->BaseValue);
 				const float gameBefore = step.game;
 				const float expected   = step.expected;
 				const float buffed     = active ? g_composedMaxEnergy.GetGame() : gameBefore;
 				g_dbgRawGame[kRawMaxEnergy].store(gameBefore);
 				g_dbgRawExpected[kRawMaxEnergy].store(expected);
-				g_dbgRawBase[kRawMaxEnergy].store(energy->MaxEnergy.BaseValue);
+				g_dbgRawBase[kRawMaxEnergy].store(maxEnergy->BaseValue);
 				g_dbgRawBuffed[kRawMaxEnergy].store(buffed);
 
 				// Live-values block: stamina current/max, read here since EnergyAttributes
 				// is already resolved.
-				g_dbgStaminaCurrent.store(energy->CurrentEnergy.CurrentValue);
-				g_dbgStaminaMax.store(energy->MaxEnergy.CurrentValue);
+				g_dbgStaminaCurrent.store(currentEnergy->CurrentValue);
+				g_dbgStaminaMax.store(maxEnergy->CurrentValue);
 			}
 
-			if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
+			if (SDK::UCrEnergyLogicComponent* logic = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_EnergyLogicComponent, character))
 			{
-				const float gameBefore = logic->DelayBeforeEnergyRegeneration;
+				float* delay = BetterCheats::Fields::CrEnergyLogicComponent_DelayBeforeEnergyRegeneration.In(logic);
+				const float gameBefore = delay ? *delay : 0.0f;
 				const bool  active     = IsRawActive(kRawRegenDelay);
 				const float want       = g_rawBaseline[kRawRegenDelay].load() * SafeMultiplier(kRawRegenDelay);
-				if (active && logic->DelayBeforeEnergyRegeneration != want)
-					logic->DelayBeforeEnergyRegeneration = want;
+				if (active && delay && *delay != want)
+					*delay = want;
 				g_dbgRawGame[kRawRegenDelay].store(gameBefore);
 				g_dbgRawExpected[kRawRegenDelay].store(active ? want : gameBefore);
 			}
@@ -852,7 +857,7 @@ namespace BetterCheats::Panels::Movement
 		{
 			if (!character || !g_rawBaselineReady.load()) return;
 
-			SDK::UCrCharacterMovementComponent* move = character->CrCharacterMovementComponent;
+			SDK::UCrCharacterMovementComponent* move = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_CrCharacterMovementComponent, character);
 			if (!move) return;
 
 			const float baseline = g_rawBaseline[raw].load();
@@ -872,21 +877,28 @@ namespace BetterCheats::Panels::Movement
 				}
 
 			if (raw == kRawAirDashes)
-				move->MaxAirDashesToExecute = static_cast<int>(baseline + 0.5f);
+			{
+				if (int* airDashes = BetterCheats::Fields::CrCharacterMovementComponent_MaxAirDashesToExecute.In(move))
+					*airDashes = static_cast<int>(baseline + 0.5f);
+			}
 			else if (raw == kRawMaxEnergy)
 			{
 				// No baseline to write back -- hand CurrentValue to whatever the game
 				// currently has (see g_composedMaxEnergy).
-				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
+				SDK::UCrEnergyAttributeSet* energy = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_EnergyAttributes, character);
+				if (SDK::FGameplayAttributeData* maxEnergy = BetterCheats::Fields::CrEnergyAttributeSet_MaxEnergy.In(energy))
 				{
-					g_composedMaxEnergy.Release(energy, energy->MaxEnergy.CurrentValue);
+					g_composedMaxEnergy.Release(energy, maxEnergy->CurrentValue);
 					BetterCheats::ClearComposeState("playerMovement.compose.maxEnergy");
 				}
 			}
 			else if (raw == kRawRegenDelay)
 			{
-				if (SDK::UCrEnergyLogicComponent* logic = character->EnergyLogicComponent)
-					logic->DelayBeforeEnergyRegeneration = baseline;
+				if (SDK::UCrEnergyLogicComponent* logic = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_EnergyLogicComponent, character))
+				{
+					if (float* delay = BetterCheats::Fields::CrEnergyLogicComponent_DelayBeforeEnergyRegeneration.In(logic))
+						*delay = baseline;
+				}
 			}
 		}
 
@@ -1440,7 +1452,7 @@ namespace BetterCheats::Panels::Movement
 			// captured against, otherwise just drop the state.
 			if (character && character == g_composedCharacter)
 			{
-				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
+				if (SDK::UCrMovementAttributeSet* set = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_MovementAttributes, character))
 					for (const MoveBinding& b : kMoveBindings)
 					{
 						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
@@ -1448,7 +1460,7 @@ namespace BetterCheats::Panels::Movement
 						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
 					}
 
-				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
+				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_MovementSpeedMultiplierAttributes, character))
 					for (const SpeedBinding& b : kSpeedBindings)
 					{
 						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
@@ -1456,7 +1468,7 @@ namespace BetterCheats::Panels::Movement
 						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
 					}
 
-				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
+				if (SDK::UCrGemAttributeSet* set = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_GemAttributes, character))
 					for (const GemBinding& b : kGemBindings)
 					{
 						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
@@ -1464,9 +1476,10 @@ namespace BetterCheats::Panels::Movement
 						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
 					}
 
-				if (SDK::UCrEnergyAttributeSet* energy = character->EnergyAttributes)
+				SDK::UCrEnergyAttributeSet* energy = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_EnergyAttributes, character);
+				if (SDK::FGameplayAttributeData* maxEnergy = BetterCheats::Fields::CrEnergyAttributeSet_MaxEnergy.In(energy))
 				{
-					g_composedMaxEnergy.Release(energy, energy->MaxEnergy.CurrentValue);
+					g_composedMaxEnergy.Release(energy, maxEnergy->CurrentValue);
 					BetterCheats::ClearComposeState("playerMovement.compose.maxEnergy");
 				}
 			}

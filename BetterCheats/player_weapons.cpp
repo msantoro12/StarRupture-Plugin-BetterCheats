@@ -660,10 +660,10 @@ namespace BetterCheats::Panels::Weapons
 		{
 			hasMass = BetterCheats::Panels::Enemies::TryReadMassHealth(actor, mass);
 			hasGas  = false;
-			SDK::UCrAIBaseAttributeSet* attrs = static_cast<SDK::ACrAIBase*>(actor)->BaseAttributes;
+			SDK::UCrAIBaseAttributeSet* attrs = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrAIBase_BaseAttributes, static_cast<SDK::ACrAIBase*>(actor));
 			if (attrs)
 			{
-				gas    = attrs->CurrentHealth.CurrentValue;
+				gas    = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrHealthAttributeSet_CurrentHealth, attrs);
 				hasGas = true;
 			}
 		}
@@ -851,8 +851,8 @@ namespace BetterCheats::Panels::Weapons
 						}
 						e.massLast = e.massBefore;
 						e.gasLast  = e.gasBefore;
-						if (SDK::UCrAIBaseAttributeSet* attrs = static_cast<SDK::ACrAIBase*>(actor)->BaseAttributes)
-							e.maxHealth = attrs->MaxHealth.CurrentValue;
+						if (SDK::UCrAIBaseAttributeSet* attrs = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrAIBase_BaseAttributes, static_cast<SDK::ACrAIBase*>(actor)))
+							e.maxHealth = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrHealthAttributeSet_MaxHealth, attrs);
 						e.actor.Set(actor);
 						e.name = "<unreadable>";
 						try { e.name = actor->GetName(); } catch (...) {}
@@ -919,8 +919,8 @@ namespace BetterCheats::Panels::Weapons
 					return;
 				}
 
-				const float charge = attrs->CurrentGrenadeCharge.CurrentValue;
-				const float maxCharge = attrs->MaxGrenadeCharge.CurrentValue;
+				const float charge = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrGrenadeChargeAttributeSet_CurrentGrenadeCharge, attrs);
+				const float maxCharge = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrGrenadeChargeAttributeSet_MaxGrenadeCharge, attrs);
 				const bool sameSet = g_throwProbeAttrs.Get() == attrs;
 				const bool threw = sameSet && g_throwProbeLastCharge >= 0.0f
 					&& charge < g_throwProbeLastCharge - 0.01f
@@ -1196,7 +1196,7 @@ namespace BetterCheats::Panels::Weapons
 		{
 			if (!weaponData) return nullptr;
 
-			SDK::UClass* itemClass = weaponData->RequiredItem;
+			SDK::UClass* itemClass = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_RequiredItem, weaponData);
 			if (!itemClass || !itemClass->ClassDefaultObject) return nullptr;
 
 			SDK::UClass* base = SDK::UAuItemDataBase::StaticClass();
@@ -1211,7 +1211,7 @@ namespace BetterCheats::Panels::Weapons
 			if (g_restockFailures.load() >= kRestockMaxFailures) return;
 			if (g_restockTotal.load()    >= kRestockSessionCap)  return;
 
-			SDK::UAuItemDataBase* ammo = ResolveAmmoItem(ws->LastEquippedWeaponData);
+			SDK::UAuItemDataBase* ammo = ResolveAmmoItem(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrWeaponComponent_LastEquippedWeaponData, ws));
 			if (!ammo) return;   // tools and anything with no declared ammo type
 
 			AddNewItemFn addNewItem = ResolveAddNewItem();
@@ -1221,9 +1221,9 @@ namespace BetterCheats::Panels::Weapons
 			// reserve is real but costs no visible slot.
 			const bool restockHidden = g_restockHidden.load();
 			SDK::UCrInventoryComponent* target = restockHidden
-				? character->HiddenInventoryComponent
-				: character->InventoryComponent;
-			if (!target) target = character->InventoryComponent;
+				? BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_HiddenInventoryComponent, character)
+				: BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_InventoryComponent, character);
+			if (!target) target = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_InventoryComponent, character);
 			if (!target) return;
 
 			const int have = character->GetItemCount(ammo);
@@ -1360,8 +1360,8 @@ namespace BetterCheats::Panels::Weapons
 				BetterCheats::RestoreIfStale(key, value);
 				BetterCheats::ClearComposeState(key);
 			};
-			restore("playerWeapons.compose.grenadeMax", attrs->MaxGrenadeCharge.CurrentValue);
-			restore("playerWeapons.compose.grenadeMin", attrs->MinGrenadeCharge.CurrentValue);
+			restore("playerWeapons.compose.grenadeMax", BetterCheats::Fields::Ref(BetterCheats::Fields::CrGrenadeChargeAttributeSet_MaxGrenadeCharge.In(attrs)).CurrentValue);
+			restore("playerWeapons.compose.grenadeMin", BetterCheats::Fields::Ref(BetterCheats::Fields::CrGrenadeChargeAttributeSet_MinGrenadeCharge.In(attrs)).CurrentValue);
 		}
 
 		// Forgets every composed slot the moment the attribute set instance changes
@@ -1419,7 +1419,7 @@ namespace BetterCheats::Panels::Weapons
 		void ReleaseMagazineIfOwnerChanged(SDK::UCrWeaponItemDataBase* current)
 		{
 			ReleaseComposedIfOwnerChanged(g_composedMagazine, g_magazineOwner, current,
-				[](SDK::UCrWeaponItemDataBase* owner) -> float& { return owner->BaseMagazine.Value; },
+				[](SDK::UCrWeaponItemDataBase* owner) -> float& { return BetterCheats::Fields::Ref(BetterCheats::Fields::ScalableValue(BetterCheats::Fields::AuWeaponItemDataBase_BaseMagazine, owner)); },
 				"playerWeapons.compose.magazine");
 		}
 
@@ -1430,7 +1430,7 @@ namespace BetterCheats::Panels::Weapons
 		void ReleaseGrenadeCostIfOwnerChanged(SDK::UCrGrenadeWeaponItemDataBase* current)
 		{
 			ReleaseComposedIfOwnerChanged(g_composedGrenadeCost, g_grenadeCostOwner, current,
-				[](SDK::UCrGrenadeWeaponItemDataBase* owner) -> float& { return owner->GrenadeThrowCostOfGrenadeCharge; },
+				[](SDK::UCrGrenadeWeaponItemDataBase* owner) -> float& { return BetterCheats::Fields::Ref(BetterCheats::Fields::CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge.In(owner)); },
 				"playerWeapons.compose.grenadeCost");
 		}
 
@@ -1438,7 +1438,7 @@ namespace BetterCheats::Panels::Weapons
 		void ReleaseGrenadeBaseDamageIfOwnerChanged(SDK::UCrGrenadeWeaponItemDataBase* current)
 		{
 			ReleaseComposedIfOwnerChanged(g_composedGrenadeBaseDamage, g_grenadeBaseDamageOwner, current,
-				[](SDK::UCrGrenadeWeaponItemDataBase* owner) -> float& { return owner->BaseDamage.Value; },
+				[](SDK::UCrGrenadeWeaponItemDataBase* owner) -> float& { return BetterCheats::Fields::Ref(BetterCheats::Fields::ScalableValue(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, owner)); },
 				kGrenadeBaseDamageKey);
 		}
 
@@ -1449,7 +1449,7 @@ namespace BetterCheats::Panels::Weapons
 		{
 			if (SDK::UCrGrenadeWeaponItemDataBase* owner = g_grenadeBaseDamageOwner.Get())
 			{
-				g_composedGrenadeBaseDamage.Release(owner, owner->BaseDamage.Value);
+				g_composedGrenadeBaseDamage.Release(owner, BetterCheats::Fields::Ref(BetterCheats::Fields::ScalableValue(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, owner)));
 				BetterCheats::ClearComposeState(kGrenadeBaseDamageKey);
 			}
 			else
@@ -1471,12 +1471,12 @@ namespace BetterCheats::Panels::Weapons
 			try
 			{
 				const std::string name = grenade->GetName();
-				const bool falloff = grenade->bIsUsingDamageFalloff;
-				SDK::UCurveFloat* curve = grenade->BaseDamageFalloff;
+				const bool falloff = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_bIsUsingDamageFalloff, grenade);
+				SDK::UCurveFloat* curve = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamageFalloff, grenade);
 				if (!curve)
 				{
 					LOG_INFO("GrenadeDamageProbe: '%s' falloff=%d curve=null BaseDamage=%.2f",
-						name.c_str(), falloff ? 1 : 0, grenade->BaseDamage.Value);
+						name.c_str(), falloff ? 1 : 0, BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, grenade));
 					return;
 				}
 				const auto& keys = curve->FloatCurve.Keys;
@@ -1485,12 +1485,12 @@ namespace BetterCheats::Panels::Weapons
 				if (n <= 0)
 				{
 					LOG_INFO("GrenadeDamageProbe: '%s' falloff=%d curve='%s' keys=0 BaseDamage=%.2f",
-						name.c_str(), falloff ? 1 : 0, path.c_str(), grenade->BaseDamage.Value);
+						name.c_str(), falloff ? 1 : 0, path.c_str(), BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, grenade));
 					return;
 				}
 				LOG_INFO("GrenadeDamageProbe: '%s' falloff=%d curve='%s' keys=%d first=(%.1f, %.2f) last=(%.1f, %.2f) BaseDamage=%.2f",
 					name.c_str(), falloff ? 1 : 0, path.c_str(), n,
-					keys[0].Time, keys[0].Value, keys[n - 1].Time, keys[n - 1].Value, grenade->BaseDamage.Value);
+					keys[0].Time, keys[0].Value, keys[n - 1].Time, keys[n - 1].Value, BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, grenade));
 			}
 			catch (...)
 			{
@@ -1574,7 +1574,7 @@ namespace BetterCheats::Panels::Weapons
 					continue;
 				if (obj->IsA(weaponClass))
 				{
-					if (static_cast<SDK::UCrWeaponItemDataBase*>(obj)->BaseDamageFalloff != curve)
+					if (BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamageFalloff, static_cast<SDK::UCrWeaponItemDataBase*>(obj)) != curve)
 						continue;
 					if (obj->Class == grenade->Class)
 						continue;
@@ -1582,7 +1582,7 @@ namespace BetterCheats::Panels::Weapons
 						continue;
 					return obj->GetFullName();
 				}
-				if (obj->IsA(modClass) && static_cast<SDK::UCrWeaponModDataAsset*>(obj)->BaseDamageFalloffCurveOverride == curve)
+				if (obj->IsA(modClass) && BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrWeaponModDataAsset_BaseDamageFalloffCurveOverride, static_cast<SDK::UCrWeaponModDataAsset*>(obj)) == curve)
 					return obj->GetFullName();
 			}
 			return {};
@@ -1602,7 +1602,7 @@ namespace BetterCheats::Panels::Weapons
 		// originals back.
 		GrenadeFalloffReadout ApplyGrenadeFalloff(SDK::UCrGrenadeWeaponItemDataBase* grenade, bool active, float factor)
 		{
-			SDK::UCurveFloat* curve = (grenade && grenade->bIsUsingDamageFalloff) ? grenade->BaseDamageFalloff : nullptr;
+			SDK::UCurveFloat* curve = (grenade && BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_bIsUsingDamageFalloff, grenade)) ? BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamageFalloff, grenade) : nullptr;
 			if (g_grenadeFalloff.captured
 				&& (curve != g_grenadeFalloff.curve.Get() || grenade != g_grenadeFalloff.owner.Get()))
 				ReleaseGrenadeFalloffNow();
@@ -1910,14 +1910,14 @@ namespace BetterCheats::Panels::Weapons
 
 			auto* cdo = static_cast<SDK::UCrWeaponItemDataBase*>(object);
 			profile.baseCdo.Set(cdo);
-			profile.baseDamage          = cdo->BaseDamage.Value;
-			profile.baseRoundsPerMinute = cdo->RoundsPerMinute.Value;
-			profile.baseMagazine        = cdo->BaseMagazine.Value;
-			profile.baseRange           = cdo->BaseRange.Value;
-			profile.basePierce          = cdo->PossibleEnemiesHitPerTrace;
-			profile.baseReloadTime      = cdo->ReloadTime.Value;
-			profile.baseSpread          = cdo->Spread.Value;
-			profile.baseAdsSpeed        = cdo->AimCameraSpeed.Value;
+			profile.baseDamage          = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, cdo);
+			profile.baseRoundsPerMinute = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_RoundsPerMinute, cdo);
+			profile.baseMagazine        = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseMagazine, cdo);
+			profile.baseRange           = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseRange, cdo);
+			profile.basePierce          = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrWeaponItemDataBase_PossibleEnemiesHitPerTrace, cdo);
+			profile.baseReloadTime      = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_ReloadTime, cdo);
+			profile.baseSpread          = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_Spread, cdo);
+			profile.baseAdsSpeed        = BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_AimCameraSpeed, cdo);
 			profile.baseResolved        = true;
 			LOG_INFO("Weapons: resolved base stats for '%s' (tab '%s').", profile.raw.c_str(), profile.display.c_str());
 			if (profile.isGrenade)
@@ -2028,19 +2028,19 @@ namespace BetterCheats::Panels::Weapons
 		}
 
 		SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
-		if (!character || !character->WeaponSystem)
+		if (!character || !BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponSystem, character))
 			return;
 
 		// Tab presence for whatever grenade is currently equipped, independent of the
 		// active-profile selection below -- see GetEquippedGrenadeItemData.
-		SDK::UCrGrenadeWeaponItemDataBase* slotGrenade = GetEquippedGrenadeItemData(character->WeaponSystem);
+		SDK::UCrGrenadeWeaponItemDataBase* slotGrenade = GetEquippedGrenadeItemData(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponSystem, character));
 		if (slotGrenade)
 		{
 			std::lock_guard<std::mutex> lock(g_profilesMutex);
 			FindOrCreateProfile(slotGrenade->GetName(), true);
 		}
 
-		if (SDK::UCrWeaponItemDataBase* data = character->WeaponSystem->LastEquippedWeaponData)
+		if (SDK::UCrWeaponItemDataBase* data = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrWeaponComponent_LastEquippedWeaponData, BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponSystem, character)))
 		{
 			const std::string raw = data->GetName();
 
@@ -2098,7 +2098,7 @@ namespace BetterCheats::Panels::Weapons
 
 		try
 		{
-			SDK::UCrWeaponAttributeSet* weapons = character->WeaponAttributes;
+			SDK::UCrWeaponAttributeSet* weapons = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponAttributes, character);
 			ForgetComposedIfOwnerChanged(weapons);
 
 			if (weapons)
@@ -2164,14 +2164,14 @@ namespace BetterCheats::Panels::Weapons
 			// .Value, the weapon TYPE's own data asset field the clip-size getter
 			// actually reads -- not a GAS attribute, so it's outside the
 			// `weapons`-gated loop above and keyed by the data asset, not the character.
-			SDK::UCrWeaponItemDataBase* equippedData = character->WeaponSystem->LastEquippedWeaponData;
+			SDK::UCrWeaponItemDataBase* equippedData = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrWeaponComponent_LastEquippedWeaponData, BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponSystem, character));
 			ReleaseMagazineIfOwnerChanged(equippedData);
 
 			if (equippedData)
 			{
 				const bool active = IsActive(kAttrMagazine, profile.values[kAttrMagazine]);
 				const ComposeStep step = ApplyComposedRow(g_composedMagazine, equippedData,
-					equippedData->BaseMagazine.Value, "playerWeapons.compose.magazine",
+					BetterCheats::Fields::Ref(BetterCheats::Fields::ScalableValue(BetterCheats::Fields::AuWeaponItemDataBase_BaseMagazine, equippedData)), "playerWeapons.compose.magazine",
 					active, profile.values[kAttrMagazine], BetterCheats::ComposedAttribute::Mode::Add,
 					kMagazineFloor, kMagazineCeiling);
 
@@ -2181,9 +2181,9 @@ namespace BetterCheats::Panels::Weapons
 				// Weapon base stats -- real CDO fields the game itself uses, never
 				// written by us except BaseMagazine, so show the ORIGINAL we captured
 				// rather than a live read that would show our own offset while active.
-				g_dbgWeaponBaseDamage.store(equippedData->BaseDamage.Value);
-				g_dbgWeaponRoundsPerMinute.store(equippedData->RoundsPerMinute.Value);
-				g_dbgWeaponBaseRange.store(equippedData->BaseRange.Value);
+				g_dbgWeaponBaseDamage.store(BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, equippedData));
+				g_dbgWeaponRoundsPerMinute.store(BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_RoundsPerMinute, equippedData));
+				g_dbgWeaponBaseRange.store(BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseRange, equippedData));
 				g_dbgWeaponBaseMagazine.store(active ? g_composedMagazine.GetGame() : step.game);
 			}
 
@@ -2232,10 +2232,10 @@ namespace BetterCheats::Panels::Weapons
 				const float damageScale = grenadeProfile.grenadeValues[kGrenadeDamage];
 				const bool  damageActive = BetterCheats::DiffersFromDefault(damageScale, kGrenadeRows[kGrenadeDamage].defaultValue);
 				// A falloff grenade never reads BaseDamage: the curve carries the row.
-				const bool  usesFalloff = grenadeData->bIsUsingDamageFalloff && grenadeData->BaseDamageFalloff;
+				const bool  usesFalloff = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_bIsUsingDamageFalloff, grenadeData) && BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamageFalloff, grenadeData);
 				const GrenadeFalloffReadout falloff = ApplyGrenadeFalloff(grenadeData, damageActive, damageScale);
 				const ComposeStep damageStep = ApplyComposedRow(g_composedGrenadeBaseDamage, grenadeData,
-					grenadeData->BaseDamage.Value, kGrenadeBaseDamageKey,
+					BetterCheats::Fields::Ref(BetterCheats::Fields::ScalableValue(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, grenadeData)), kGrenadeBaseDamageKey,
 					damageActive && !usesFalloff, damageScale,
 					kGrenadeModes[kGrenadeDamage], 0.0f, kGrenadeBaseDamageFinalMax);
 
@@ -2257,7 +2257,7 @@ namespace BetterCheats::Panels::Weapons
 				const bool active = BetterCheats::DiffersFromDefault(
 					grenadeProfile.grenadeValues[kGrenadeCost], kGrenadeRows[kGrenadeCost].defaultValue);
 				const ComposeStep step = ApplyComposedRow(g_composedGrenadeCost, grenadeData,
-					grenadeData->GrenadeThrowCostOfGrenadeCharge, "playerWeapons.compose.grenadeCost",
+					BetterCheats::Fields::Ref(BetterCheats::Fields::CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge.In(grenadeData)), "playerWeapons.compose.grenadeCost",
 					active, grenadeProfile.grenadeValues[kGrenadeCost], kGrenadeModes[kGrenadeCost],
 					kGrenadeRows[kGrenadeCost].minValue, kGrenadeRows[kGrenadeCost].maxValue);
 
@@ -2270,14 +2270,14 @@ namespace BetterCheats::Panels::Weapons
 				ReleaseGrenadeFalloffNow();
 			}
 
-			SDK::UCrGrenadeChargeAttributeSet* grenadeAttrs = character->GrenadeChargeAttributes;
+			SDK::UCrGrenadeChargeAttributeSet* grenadeAttrs = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_GrenadeChargeAttributes, character);
 			RestoreLegacyGrenadeChargeWrites(grenadeAttrs);
 
 			// Before the top-up below, so an Infinite Charges refill can't hide the drop.
 			ProbeGrenadeThrow(grenadeAttrs, grenadeData != nullptr, deltaSeconds,
 				grenadeData ? grenadeProfile.grenadeValues[kGrenadeDamage] : 1.0f,
-				grenadeData ? grenadeData->BaseDamage.Value : 0.0f,
-				character->HealthAttributes);
+				grenadeData ? BetterCheats::Fields::ScalableOr(BetterCheats::Fields::AuWeaponItemDataBase_BaseDamage, grenadeData) : 0.0f,
+				BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_HealthAttributes, character));
 
 			if (grenadeAttrs)
 			{
@@ -2295,12 +2295,12 @@ namespace BetterCheats::Panels::Weapons
 				// or the next recalculation would drop it back.
 				if (anyInfiniteCharges)
 				{
-					const float maxCharge = grenadeAttrs->MaxGrenadeCharge.CurrentValue;
-					SDK::FGameplayAttributeData& charge = grenadeAttrs->CurrentGrenadeCharge;
-					if (maxCharge > 0.0f && (charge.CurrentValue < maxCharge || charge.BaseValue < maxCharge))
+					const float maxCharge = BetterCheats::Fields::AttrValueOr(BetterCheats::Fields::CrGrenadeChargeAttributeSet_MaxGrenadeCharge, grenadeAttrs);
+					SDK::FGameplayAttributeData* charge = BetterCheats::Fields::CrGrenadeChargeAttributeSet_CurrentGrenadeCharge.In(grenadeAttrs);
+					if (charge && maxCharge > 0.0f && (charge->CurrentValue < maxCharge || charge->BaseValue < maxCharge))
 					{
-						charge.CurrentValue = maxCharge;
-						charge.BaseValue    = maxCharge;
+						charge->CurrentValue = maxCharge;
+						charge->BaseValue    = maxCharge;
 					}
 				}
 			}
@@ -2345,7 +2345,7 @@ namespace BetterCheats::Panels::Weapons
 			// tick if written directly; the unreplicated Cr multiplier is what sticks.
 			// Holding the magazine at full is what survives: it never empties, so it never
 			// reloads, so the reserve is never drawn from.
-			SDK::UCrWeaponComponent* ws = character->WeaponSystem;
+			SDK::UCrWeaponComponent* ws = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponSystem, character);
 
 			const float maxMag = ws->GetEquippedWeaponMaxMagazineAmmo();
 			const float curMag = ws->GetEquippedWeaponCurrentAmmo();
@@ -2403,7 +2403,7 @@ namespace BetterCheats::Panels::Weapons
 		// this state refers to is already gone; ForgetComposedIfOwnerChanged would
 		// just no-op the writes below anyway, but skip the SDK call entirely.
 		SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
-		SDK::UCrWeaponAttributeSet* weapons = character ? character->WeaponAttributes : nullptr;
+		SDK::UCrWeaponAttributeSet* weapons = character ? BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_WeaponAttributes, character) : nullptr;
 
 		try
 		{
@@ -2425,7 +2425,7 @@ namespace BetterCheats::Panels::Weapons
 
 			if (SDK::UCrWeaponItemDataBase* owner = g_magazineOwner.Get())
 			{
-				g_composedMagazine.Release(owner, owner->BaseMagazine.Value);
+				g_composedMagazine.Release(owner, BetterCheats::Fields::Ref(BetterCheats::Fields::ScalableValue(BetterCheats::Fields::AuWeaponItemDataBase_BaseMagazine, owner)));
 				BetterCheats::ClearComposeState("playerWeapons.compose.magazine");
 			}
 			else
@@ -2435,7 +2435,7 @@ namespace BetterCheats::Panels::Weapons
 
 			if (SDK::UCrGrenadeWeaponItemDataBase* owner = g_grenadeCostOwner.Get())
 			{
-				g_composedGrenadeCost.Release(owner, owner->GrenadeThrowCostOfGrenadeCharge);
+				g_composedGrenadeCost.Release(owner, BetterCheats::Fields::Ref(BetterCheats::Fields::CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge.In(owner)));
 				BetterCheats::ClearComposeState("playerWeapons.compose.grenadeCost");
 			}
 			else

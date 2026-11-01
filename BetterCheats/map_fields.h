@@ -2,7 +2,14 @@
 
 #include "plugin_interface.h"
 #include "Chimera_classes.hpp"
+#include "ChimeraUI_classes.hpp"
+#include "AuItems_classes.hpp"
+#include "AuActorPlacement_classes.hpp"
+#include "WBP_InventorySlot_classes.hpp"
 #include "plugin_map.h"
+#include "Engine_classes.hpp"
+#include "MassAIPrototypeEnemyRuntime_classes.hpp"
+#include <string>
 
 // Every game-class member BetterCheats reads or writes through the SDK, taken
 // from the loader's map for the running game build (see plugin_map.h).
@@ -93,17 +100,300 @@ namespace BetterCheats::Fields
 	// UCrUW_InventoryContainer: a private TWeakObjectPtr<UCrInventoryComponent>
 	inline auto CrUW_InventoryContainer_InventoryComponent = BC_NATIVE(SDK::FWeakObjectPtr, UCrUW_InventoryContainer, InventoryComponent, 0x468);
 
+	// Members the plugin reads and writes by name, one row each for the running build.
+
+	// ACrCharacterPlayerBase
+	inline auto CrCharacterPlayerBase_InventoryComponent = BC_FIELD(ACrCharacterPlayerBase, InventoryComponent);
+	inline auto CrCharacterPlayerBase_HiddenInventoryComponent = BC_FIELD(ACrCharacterPlayerBase, HiddenInventoryComponent);
+	inline auto CrCharacterPlayerBase_WeaponSystem = BC_FIELD(ACrCharacterPlayerBase, WeaponSystem);
+	inline auto CrCharacterPlayerBase_WeaponAttributes = BC_FIELD(ACrCharacterPlayerBase, WeaponAttributes);
+	inline auto CrCharacterPlayerBase_MiningBoostAttributes = BC_FIELD(ACrCharacterPlayerBase, MiningBoostAttributes);
+	inline auto CrCharacterPlayerBase_GemAttributes = BC_FIELD(ACrCharacterPlayerBase, GemAttributes);
+	inline auto CrCharacterPlayerBase_MovementAttributes = BC_FIELD(ACrCharacterPlayerBase, MovementAttributes);
+	inline auto CrCharacterPlayerBase_MovementSpeedMultiplierAttributes = BC_FIELD(ACrCharacterPlayerBase, MovementSpeedMultiplierAttributes);
+	inline auto CrCharacterPlayerBase_EnergyLogicComponent = BC_FIELD(ACrCharacterPlayerBase, EnergyLogicComponent);
+	inline auto CrCharacterPlayerBase_CrCharacterMovementComponent = BC_FIELD(ACrCharacterPlayerBase, CrCharacterMovementComponent);
+	inline auto CrCharacterPlayerBase_GrenadeChargeAttributes = BC_FIELD(ACrCharacterPlayerBase, GrenadeChargeAttributes);
+	inline auto CrCharacterPlayerBase_HealthAttributes = BC_FIELD(ACrCharacterPlayerBase, HealthAttributes);
+	inline auto CrCharacterPlayerBase_EnergyAttributes = BC_FIELD(ACrCharacterPlayerBase, EnergyAttributes);
+	inline auto CrCharacterPlayerBase_ShieldAttributes = BC_FIELD(ACrCharacterPlayerBase, ShieldAttributes);
+	inline auto CrCharacterPlayerBase_HydrationAttributes = BC_FIELD(ACrCharacterPlayerBase, HydrationAttributes);
+	inline auto CrCharacterPlayerBase_CaloriesAttributes = BC_FIELD(ACrCharacterPlayerBase, CaloriesAttributes);
+	inline auto CrCharacterPlayerBase_OxygenAttributes = BC_FIELD(ACrCharacterPlayerBase, OxygenAttributes);
+	inline auto CrCharacterPlayerBase_ToxicityAttributes = BC_FIELD(ACrCharacterPlayerBase, ToxicityAttributes);
+	inline auto CrCharacterPlayerBase_RadiationAttributes = BC_FIELD(ACrCharacterPlayerBase, RadiationAttributes);
+	inline auto CrCharacterPlayerBase_HeatAttributes = BC_FIELD(ACrCharacterPlayerBase, HeatAttributes);
+	inline auto CrCharacterPlayerBase_DrainAttributes = BC_FIELD(ACrCharacterPlayerBase, DrainAttributes);
+	inline auto CrCharacterPlayerBase_CorrosionAttributes = BC_FIELD(ACrCharacterPlayerBase, CorrosionAttributes);
+	inline auto CrCharacterPlayerBase_InfectionAttributes = BC_FIELD(ACrCharacterPlayerBase, InfectionAttributes);
+	inline auto CrCharacterPlayerBase_TemperatureAttributes = BC_FIELD(ACrCharacterPlayerBase, TemperatureAttributes);
+
+	// UCrEnergyAttributeSet
+	inline auto CrEnergyAttributeSet_CurrentEnergy = BC_FIELD(UCrEnergyAttributeSet, CurrentEnergy);
+	inline auto CrEnergyAttributeSet_MaxEnergy = BC_FIELD(UCrEnergyAttributeSet, MaxEnergy);
+
+	// UCrShieldAttributeSet
+	inline auto CrShieldAttributeSet_CurrentShield = BC_FIELD(UCrShieldAttributeSet, CurrentShield);
+	inline auto CrShieldAttributeSet_MaxShield = BC_FIELD(UCrShieldAttributeSet, MaxShield);
+
+	// UCrHydrationAttributeSet
+	inline auto CrHydrationAttributeSet_CurrentHydration = BC_FIELD(UCrHydrationAttributeSet, CurrentHydration);
+	inline auto CrHydrationAttributeSet_MaxHydration = BC_FIELD(UCrHydrationAttributeSet, MaxHydration);
+
+	// UCrCaloriesAttributeSet
+	inline auto CrCaloriesAttributeSet_CurrentCalories = BC_FIELD(UCrCaloriesAttributeSet, CurrentCalories);
+	inline auto CrCaloriesAttributeSet_MaxCalories = BC_FIELD(UCrCaloriesAttributeSet, MaxCalories);
+
+	// UCrOxygenAttributeSet
+	inline auto CrOxygenAttributeSet_CurrentOxygen = BC_FIELD(UCrOxygenAttributeSet, CurrentOxygen);
+	inline auto CrOxygenAttributeSet_MaxOxygen = BC_FIELD(UCrOxygenAttributeSet, MaxOxygen);
+
+	// UCrToxicityAttributeSet
+	inline auto CrToxicityAttributeSet_CurrentToxicity = BC_FIELD(UCrToxicityAttributeSet, CurrentToxicity);
+	inline auto CrToxicityAttributeSet_MaxToxicity = BC_FIELD(UCrToxicityAttributeSet, MaxToxicity);
+	inline auto CrToxicityAttributeSet_MinToxicity = BC_FIELD(UCrToxicityAttributeSet, MinToxicity);
+
+	// UCrRadiationAttributeSet
+	inline auto CrRadiationAttributeSet_CurrentRadiation = BC_FIELD(UCrRadiationAttributeSet, CurrentRadiation);
+	inline auto CrRadiationAttributeSet_MaxRadiation = BC_FIELD(UCrRadiationAttributeSet, MaxRadiation);
+	inline auto CrRadiationAttributeSet_MinRadiation = BC_FIELD(UCrRadiationAttributeSet, MinRadiation);
+
+	// UCrHeatAttributeSet
+	inline auto CrHeatAttributeSet_CurrentHeat = BC_FIELD(UCrHeatAttributeSet, CurrentHeat);
+	inline auto CrHeatAttributeSet_MaxHeat = BC_FIELD(UCrHeatAttributeSet, MaxHeat);
+	inline auto CrHeatAttributeSet_MinHeat = BC_FIELD(UCrHeatAttributeSet, MinHeat);
+
+	// UCrDrainAttributeSet
+	inline auto CrDrainAttributeSet_CurrentDrain = BC_FIELD(UCrDrainAttributeSet, CurrentDrain);
+	inline auto CrDrainAttributeSet_MaxDrain = BC_FIELD(UCrDrainAttributeSet, MaxDrain);
+	inline auto CrDrainAttributeSet_MinDrain = BC_FIELD(UCrDrainAttributeSet, MinDrain);
+
+	// UCrCorrosionAttributeSet
+	inline auto CrCorrosionAttributeSet_CurrentCorrosion = BC_FIELD(UCrCorrosionAttributeSet, CurrentCorrosion);
+	inline auto CrCorrosionAttributeSet_MaxCorrosion = BC_FIELD(UCrCorrosionAttributeSet, MaxCorrosion);
+	inline auto CrCorrosionAttributeSet_MinCorrosion = BC_FIELD(UCrCorrosionAttributeSet, MinCorrosion);
+
+	// UCrInfectionAttributeSet
+	inline auto CrInfectionAttributeSet_CurrentInfection = BC_FIELD(UCrInfectionAttributeSet, CurrentInfection);
+	inline auto CrInfectionAttributeSet_MaxInfection = BC_FIELD(UCrInfectionAttributeSet, MaxInfection);
+	inline auto CrInfectionAttributeSet_MinInfection = BC_FIELD(UCrInfectionAttributeSet, MinInfection);
+
+	// UCrTemperatureAttributeSet
+	inline auto CrTemperatureAttributeSet_CurrentTemperature = BC_FIELD(UCrTemperatureAttributeSet, CurrentTemperature);
+	inline auto CrTemperatureAttributeSet_MaxTemperature = BC_FIELD(UCrTemperatureAttributeSet, MaxTemperature);
+	inline auto CrTemperatureAttributeSet_MinTemperature = BC_FIELD(UCrTemperatureAttributeSet, MinTemperature);
+
+	// UCrHealthAttributeSet
+	inline auto CrHealthAttributeSet_CurrentHealth = BC_FIELD(UCrHealthAttributeSet, CurrentHealth);
+	inline auto CrHealthAttributeSet_MaxHealth = BC_FIELD(UCrHealthAttributeSet, MaxHealth);
+
+	// UCrMiningBoostAttributeSet
+	inline auto CrMiningBoostAttributeSet_CurrentBoostMultiplierValue = BC_FIELD(UCrMiningBoostAttributeSet, CurrentBoostMultiplierValue);
+	inline auto CrMiningBoostAttributeSet_MaxBoostMultiplierValue = BC_FIELD(UCrMiningBoostAttributeSet, MaxBoostMultiplierValue);
+
+	// UCrGrenadeChargeAttributeSet
+	inline auto CrGrenadeChargeAttributeSet_CurrentGrenadeCharge = BC_FIELD(UCrGrenadeChargeAttributeSet, CurrentGrenadeCharge);
+	inline auto CrGrenadeChargeAttributeSet_MaxGrenadeCharge = BC_FIELD(UCrGrenadeChargeAttributeSet, MaxGrenadeCharge);
+	inline auto CrGrenadeChargeAttributeSet_MinGrenadeCharge = BC_FIELD(UCrGrenadeChargeAttributeSet, MinGrenadeCharge);
+
+	// UCrWeaponAttributeSet
+	inline auto CrWeaponAttributeSet_AggroPerShotModMultiplier = BC_FIELD(UCrWeaponAttributeSet, AggroPerShotModMultiplier);
+
+	// ACrAIBase
+	inline auto CrAIBase_BaseAttributes = BC_FIELD(ACrAIBase, BaseAttributes);
+
+	// UCrCharacterMovementComponent
+	inline auto CrCharacterMovementComponent_MaxAirDashesToExecute = BC_FIELD(UCrCharacterMovementComponent, MaxAirDashesToExecute);
+
+	// UCrEnergyLogicComponent
+	inline auto CrEnergyLogicComponent_DelayBeforeEnergyRegeneration = BC_FIELD(UCrEnergyLogicComponent, DelayBeforeEnergyRegeneration);
+
+	// UCrWeaponComponent
+	inline auto CrWeaponComponent_LastEquippedWeaponData = BC_FIELD(UCrWeaponComponent, LastEquippedWeaponData);
+
+	// UAuWeaponItemDataBase
+	inline auto AuWeaponItemDataBase_BaseDamage = BC_FIELD(UAuWeaponItemDataBase, BaseDamage);
+	inline auto AuWeaponItemDataBase_BaseRange = BC_FIELD(UAuWeaponItemDataBase, BaseRange);
+	inline auto AuWeaponItemDataBase_RoundsPerMinute = BC_FIELD(UAuWeaponItemDataBase, RoundsPerMinute);
+	inline auto AuWeaponItemDataBase_BaseMagazine = BC_FIELD(UAuWeaponItemDataBase, BaseMagazine);
+	inline auto AuWeaponItemDataBase_BaseDamageFalloff = BC_FIELD(UAuWeaponItemDataBase, BaseDamageFalloff);
+	inline auto AuWeaponItemDataBase_ReloadTime = BC_FIELD(UAuWeaponItemDataBase, ReloadTime);
+	inline auto AuWeaponItemDataBase_Spread = BC_FIELD(UAuWeaponItemDataBase, Spread);
+	inline auto AuWeaponItemDataBase_AimCameraSpeed = BC_FIELD(UAuWeaponItemDataBase, AimCameraSpeed);
+	inline auto AuWeaponItemDataBase_RequiredItem = BC_FIELD(UAuWeaponItemDataBase, RequiredItem);
+
+	// UCrWeaponItemDataBase
+	inline auto CrWeaponItemDataBase_MiningTypeDamage = BC_FIELD(UCrWeaponItemDataBase, MiningTypeDamage);
+	inline auto CrWeaponItemDataBase_WeakpointDamageMultiplier = BC_FIELD(UCrWeaponItemDataBase, WeakpointDamageMultiplier);
+	inline auto CrWeaponItemDataBase_ShotAggro = BC_FIELD(UCrWeaponItemDataBase, ShotAggro);
+	inline auto CrWeaponItemDataBase_PossibleEnemiesHitPerTrace = BC_FIELD(UCrWeaponItemDataBase, PossibleEnemiesHitPerTrace);
+
+	// UCrGrenadeWeaponItemDataBase
+	inline auto CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge = BC_FIELD(UCrGrenadeWeaponItemDataBase, GrenadeThrowCostOfGrenadeCharge);
+
+	// UCrWeaponModDataAsset
+	inline auto CrWeaponModDataAsset_BaseDamageFalloffCurveOverride = BC_FIELD(UCrWeaponModDataAsset, BaseDamageFalloffCurveOverride);
+
+	// UCrInventoryComponent
+	inline auto CrInventoryComponent_GridColumns = BC_FIELD(UCrInventoryComponent, GridColumns);
+	inline auto CrInventoryComponent_GridRows = BC_FIELD(UCrInventoryComponent, GridRows);
+	inline auto CrInventoryComponent_Slots = BC_FIELD(UCrInventoryComponent, Slots);
+
+	// UCrUW_InventoryContainer
+	inline auto CrUW_InventoryContainer_ItemGridPanel = BC_FIELD(UCrUW_InventoryContainer, ItemGridPanel);
+
+	// UAuItemDataBase
+	inline auto AuItemDataBase_UniqueItemName = BC_FIELD(UAuItemDataBase, UniqueItemName);
+	inline auto AuItemDataBase_ItemName = BC_FIELD(UAuItemDataBase, ItemName);
+	inline auto AuItemDataBase_MaxStack = BC_FIELD(UAuItemDataBase, MaxStack);
+	inline auto AuItemDataBase_StackingType = BC_FIELD(UAuItemDataBase, StackingType);
+	inline auto AuItemDataBase_UIItemType = BC_FIELD(UAuItemDataBase, UIItemType);
+	inline auto AuItemDataBase_ItemIcon = BC_FIELD(UAuItemDataBase, ItemIcon);
+
+	// ACrGatherableBaseActor
+	inline auto CrGatherableBaseActor_ResourceCount = BC_FIELD(ACrGatherableBaseActor, ResourceCount);
+
+	// FAuAddedItem
+	inline auto AuAddedItem_Amount = BC_FIELD(FAuAddedItem, Amount);
+
+	// UCrElectricityTrait
+	inline auto CrElectricityTrait_Parameters = BC_FIELD(UCrElectricityTrait, Parameters);
+
+	// FCrElectricityParameters
+	inline auto CrElectricityParameters_ElectricityValue = BC_FIELD(FCrElectricityParameters, ElectricityValue);
+	inline auto CrElectricityParameters_Type = BC_FIELD(FCrElectricityParameters, Type);
+
+	// UAuActorPlacementData
+	inline auto AuActorPlacementData_EntityType = BC_FIELD(UAuActorPlacementData, EntityType);
+	inline auto AuActorPlacementData_BuildingID = BC_FIELD(UAuActorPlacementData, BuildingID);
+
+	// FAuAPMassSpawnedEntityType
+	inline auto AuAPMassSpawnedEntityType_EntityConfig = BC_FIELD(FAuAPMassSpawnedEntityType, EntityConfig);
+
+	// UCrBuildingData
+	inline auto CrBuildingData_BuildingName = BC_FIELD(UCrBuildingData, BuildingName);
+
+	// ACrAPHelper
+	inline auto CrAPHelper_BuildingData = BC_FIELD(ACrAPHelper, BuildingData);
+	inline auto CrAPHelper_SnappedActors = BC_FIELD(ACrAPHelper, SnappedActors);
+
+	// ACrPlayerControllerBase
+	inline auto CrPlayerControllerBase_PlayerSkills = BC_FIELD(ACrPlayerControllerBase, PlayerSkills);
+
+	// FCrSkillData
+	inline auto CrSkillData_Skill = BC_FIELD(FCrSkillData, Skill);
+	inline auto CrSkillData_Level = BC_FIELD(FCrSkillData, Level);
+	inline auto CrSkillData_Experience = BC_FIELD(FCrSkillData, Experience);
+
+	// ACrGameStateBase
+	inline auto CrGameStateBase_CorporationsOwner = BC_FIELD(ACrGameStateBase, CorporationsOwner);
+	inline auto CrGameStateBase_TechnologyKeeper = BC_FIELD(ACrGameStateBase, TechnologyKeeper);
+
+	// ACrCorporationsOwner
+	inline auto CrCorporationsOwner_DataPoints = BC_FIELD(ACrCorporationsOwner, DataPoints);
+
+	// UCrEnviroWaveTimerSubsystem
+	inline auto CrEnviroWaveTimerSubsystem_TimerActor = BC_FIELD(UCrEnviroWaveTimerSubsystem, TimerActor);
+
+	// ACrWaveTimerActor
+	inline auto CrWaveTimerActor_bPause = BC_FIELD(ACrWaveTimerActor, bPause);
+
+	// UAuWeaponItemDataBase (flag)
+	inline auto AuWeaponItemDataBase_bIsUsingDamageFalloff = BC_FIELD(UAuWeaponItemDataBase, bIsUsingDamageFalloff);
+
+	// AMassEnemyCharacterBase
+	inline auto MassEnemyCharacterBase_bIsInPool = BC_FIELD(AMassEnemyCharacterBase, bIsInPool);
+	inline auto MassEnemyCharacterBase_AllowedAttackDistance = BC_FIELD(AMassEnemyCharacterBase, AllowedAttackDistance);
+	inline auto MassEnemyCharacterBase_AllowedAttackConeHalfAngle = BC_FIELD(AMassEnemyCharacterBase, AllowedAttackConeHalfAngle);
+	inline auto MassEnemyCharacterBase_AllowedBuildingAttackDistance = BC_FIELD(AMassEnemyCharacterBase, AllowedBuildingAttackDistance);
+
+	// UWBP_InventorySlot_C: a Blueprint member, found on first use through the loader's property reader.
+	inline PluginLazyField<SDK::USizeBox*> WBP_InventorySlot_SizeBox{ "SizeBox" };
+
 	// Structs the plugin copies or indexes by value; they fail the plugin when the
 	// running build's size differs from the one compiled in.
 	inline auto AuAddedItem_Size             = SR_SIZE_CHECK(FAuAddedItem);
 	inline auto CrSkillData_Size             = SR_SIZE_CHECK(FCrSkillData);
 	inline auto CrElectricityParameters_Size = SR_SIZE_CHECK(FCrElectricityParameters);
 
+	// The member's value, or a default when the object is null or the member did not resolve.
+	template <class T, class Object>
+	T ValueOr(const PluginField<T>& field, const Object* object, T fallback = T{})
+	{
+		const T* at = field.In(static_cast<const void*>(object));
+		return at ? *at : fallback;
+	}
+
+	// The Value of a FScalableFloat member, or null when the object is null or the member did not resolve.
+	// FScalableFloat itself is an engine type, so its own layout stays compiled in.
+	template <class Object>
+	float* ScalableValue(const PluginField<SDK::FScalableFloat>& field, Object* object)
+	{
+		SDK::FScalableFloat* at = field.In(static_cast<void*>(object));
+		return at ? &at->Value : nullptr;
+	}
+
+	template <class Object>
+	float ScalableOr(const PluginField<SDK::FScalableFloat>& field, const Object* object, float fallback = 0.0f)
+	{
+		const SDK::FScalableFloat* at = field.In(static_cast<const void*>(object));
+		return at ? at->Value : fallback;
+	}
+
+	// Writes the member; false when the object is null or the member did not resolve.
+	template <class T, class Object>
+	bool Store(const PluginField<T>& field, Object* object, const T& value)
+	{
+		T* at = field.In(static_cast<void*>(object));
+		if (!at)
+			return false;
+		*at = value;
+		return true;
+	}
+
+	// CurrentValue of a FGameplayAttributeData member, or the fallback. FGameplayAttributeData is an engine type.
+	template <class Object>
+	float AttrValueOr(const PluginField<SDK::FGameplayAttributeData>& field, const Object* object, float fallback = 0.0f)
+	{
+		const SDK::FGameplayAttributeData* at = field.In(static_cast<const void*>(object));
+		return at ? at->CurrentValue : fallback;
+	}
+
+	// Number of slots in an inventory component.
+	inline int SlotCount(const SDK::UCrInventoryComponent* inventory)
+	{
+		const auto* slots = CrInventoryComponent_Slots.In(static_cast<const void*>(inventory));
+		return slots ? slots->Num() : 0;
+	}
+
+	// An item's unique name, or empty.
+	inline std::string UniqueNameOf(const SDK::UAuItemDataBase* item)
+	{
+		const SDK::FName* name = AuItemDataBase_UniqueItemName.In(static_cast<const void*>(item));
+		return name ? name->ToString() : std::string();
+	}
+
+	// An item's localised display name, or empty.
+	inline std::string DisplayNameOf(const SDK::UAuItemDataBase* item)
+	{
+		const SDK::FText* text = AuItemDataBase_ItemName.In(static_cast<const void*>(item));
+		return text ? SDK::UKismetTextLibrary::Conv_TextToString(*text).ToString() : std::string();
+	}
+
+	// A reference to the member, or to a scratch value when the pointer is null (object null or member
+	// unresolved), so a compose helper that wants a float& never dereferences null.
+	template <class T>
+	T& Ref(T* at)
+	{
+		static T scratch{};
+		return at ? *at : scratch;
+	}
+
 	// Asks the loader for every row above. False when any did not resolve; the
 	// loader has then recorded the failure and refuses the plugin.
 	inline bool Resolve(IPluginSelf* self, IPluginHookScanner* scanner)
 	{
-		return PluginMap::ResolveFields(scanner, self,
+		bool all = PluginMap::ResolveFields(scanner, self,
 			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings, CrEnviroWaveTimerSubsystem_WaitingDuration,
 			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
 			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
@@ -123,5 +413,48 @@ namespace BetterCheats::Fields
 			CrWeaponAttributeSet_MaxMagAmmoModOffset, CrWeaponAttributeSet_PossibleEnemiesHitPerTrace, CrWeaponAttributeSet_RecoilModMultiplier,
 			CrWeaponAttributeSet_ReloadSpeedModMultiplier, CrWeaponAttributeSet_SpreadModMultiplier, CrWeaponAttributeSet_SwayModMultiplier
 		);
+		all = PluginMap::ResolveFields(scanner, self,
+			AuWeaponItemDataBase_bIsUsingDamageFalloff, MassEnemyCharacterBase_bIsInPool, MassEnemyCharacterBase_AllowedAttackDistance,
+			MassEnemyCharacterBase_AllowedAttackConeHalfAngle, MassEnemyCharacterBase_AllowedBuildingAttackDistance,
+			CrCharacterPlayerBase_InventoryComponent, CrCharacterPlayerBase_HiddenInventoryComponent, CrCharacterPlayerBase_WeaponSystem,
+			CrCharacterPlayerBase_WeaponAttributes, CrCharacterPlayerBase_MiningBoostAttributes, CrCharacterPlayerBase_GemAttributes,
+			CrCharacterPlayerBase_MovementAttributes, CrCharacterPlayerBase_MovementSpeedMultiplierAttributes, CrCharacterPlayerBase_EnergyLogicComponent,
+			CrCharacterPlayerBase_CrCharacterMovementComponent, CrCharacterPlayerBase_GrenadeChargeAttributes, CrCharacterPlayerBase_HealthAttributes,
+			CrCharacterPlayerBase_EnergyAttributes, CrCharacterPlayerBase_ShieldAttributes, CrCharacterPlayerBase_HydrationAttributes,
+			CrCharacterPlayerBase_CaloriesAttributes, CrCharacterPlayerBase_OxygenAttributes, CrCharacterPlayerBase_ToxicityAttributes,
+			CrCharacterPlayerBase_RadiationAttributes, CrCharacterPlayerBase_HeatAttributes, CrCharacterPlayerBase_DrainAttributes,
+			CrCharacterPlayerBase_CorrosionAttributes, CrCharacterPlayerBase_InfectionAttributes, CrCharacterPlayerBase_TemperatureAttributes,
+			CrEnergyAttributeSet_CurrentEnergy, CrEnergyAttributeSet_MaxEnergy, CrShieldAttributeSet_CurrentShield,
+			CrShieldAttributeSet_MaxShield, CrHydrationAttributeSet_CurrentHydration, CrHydrationAttributeSet_MaxHydration,
+			CrCaloriesAttributeSet_CurrentCalories, CrCaloriesAttributeSet_MaxCalories, CrOxygenAttributeSet_CurrentOxygen,
+			CrOxygenAttributeSet_MaxOxygen, CrToxicityAttributeSet_CurrentToxicity, CrToxicityAttributeSet_MaxToxicity,
+			CrToxicityAttributeSet_MinToxicity, CrRadiationAttributeSet_CurrentRadiation, CrRadiationAttributeSet_MaxRadiation,
+			CrRadiationAttributeSet_MinRadiation, CrHeatAttributeSet_CurrentHeat, CrHeatAttributeSet_MaxHeat,
+			CrHeatAttributeSet_MinHeat, CrDrainAttributeSet_CurrentDrain, CrDrainAttributeSet_MaxDrain,
+			CrDrainAttributeSet_MinDrain, CrCorrosionAttributeSet_CurrentCorrosion, CrCorrosionAttributeSet_MaxCorrosion,
+			CrCorrosionAttributeSet_MinCorrosion, CrInfectionAttributeSet_CurrentInfection, CrInfectionAttributeSet_MaxInfection,
+			CrInfectionAttributeSet_MinInfection, CrTemperatureAttributeSet_CurrentTemperature, CrTemperatureAttributeSet_MaxTemperature,
+			CrTemperatureAttributeSet_MinTemperature, CrHealthAttributeSet_CurrentHealth, CrHealthAttributeSet_MaxHealth,
+			CrMiningBoostAttributeSet_CurrentBoostMultiplierValue, CrMiningBoostAttributeSet_MaxBoostMultiplierValue, CrGrenadeChargeAttributeSet_CurrentGrenadeCharge,
+			CrGrenadeChargeAttributeSet_MaxGrenadeCharge, CrGrenadeChargeAttributeSet_MinGrenadeCharge, CrWeaponAttributeSet_AggroPerShotModMultiplier,
+			CrAIBase_BaseAttributes, CrCharacterMovementComponent_MaxAirDashesToExecute, CrEnergyLogicComponent_DelayBeforeEnergyRegeneration,
+			CrWeaponComponent_LastEquippedWeaponData, AuWeaponItemDataBase_BaseDamage, AuWeaponItemDataBase_BaseRange,
+			AuWeaponItemDataBase_RoundsPerMinute, AuWeaponItemDataBase_BaseMagazine, AuWeaponItemDataBase_BaseDamageFalloff,
+			AuWeaponItemDataBase_ReloadTime, AuWeaponItemDataBase_Spread, AuWeaponItemDataBase_AimCameraSpeed,
+			AuWeaponItemDataBase_RequiredItem, CrWeaponItemDataBase_MiningTypeDamage, CrWeaponItemDataBase_WeakpointDamageMultiplier,
+			CrWeaponItemDataBase_ShotAggro, CrWeaponItemDataBase_PossibleEnemiesHitPerTrace, CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge,
+			CrWeaponModDataAsset_BaseDamageFalloffCurveOverride, CrInventoryComponent_GridColumns, CrInventoryComponent_GridRows,
+			CrInventoryComponent_Slots, CrUW_InventoryContainer_ItemGridPanel, AuItemDataBase_UniqueItemName,
+			AuItemDataBase_ItemName, AuItemDataBase_MaxStack, AuItemDataBase_StackingType,
+			AuItemDataBase_UIItemType, AuItemDataBase_ItemIcon, CrGatherableBaseActor_ResourceCount,
+			AuAddedItem_Amount, CrElectricityTrait_Parameters, CrElectricityParameters_ElectricityValue,
+			CrElectricityParameters_Type, AuActorPlacementData_EntityType, AuActorPlacementData_BuildingID,
+			AuAPMassSpawnedEntityType_EntityConfig, CrBuildingData_BuildingName, CrAPHelper_BuildingData,
+			CrAPHelper_SnappedActors, CrPlayerControllerBase_PlayerSkills, CrSkillData_Skill,
+			CrSkillData_Level, CrSkillData_Experience, CrGameStateBase_CorporationsOwner,
+			CrGameStateBase_TechnologyKeeper, CrCorporationsOwner_DataPoints, CrEnviroWaveTimerSubsystem_TimerActor,
+			CrWaveTimerActor_bPause
+		) && all;
+		return all;
 	}
 }

@@ -147,8 +147,8 @@ namespace BetterCheats::Panels::Wave
 		void WriteTimerPause(bool paused)
 		{
 			TimerWrite(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bPause, paused);
-			if (g_timerSubsys->TimerActor)
-				g_timerSubsys->TimerActor->bPause = paused;
+			SDK::ACrWaveTimerActor* timerActor = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_TimerActor, g_timerSubsys);
+			BetterCheats::Fields::Store(BetterCheats::Fields::CrWaveTimerActor_bPause, timerActor, paused);
 		}
 
 		std::mutex   g_snapshotMutex;

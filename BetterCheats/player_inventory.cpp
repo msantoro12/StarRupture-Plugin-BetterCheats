@@ -91,7 +91,7 @@ namespace BetterCheats::Panels::Inventory
 		SDK::UCrInventoryComponent* GetLocalInventory()
 		{
 			SDK::ACrCharacterPlayerBase* character = GetLocalCharacter();
-			return character ? character->InventoryComponent : nullptr;
+			return character ? BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrCharacterPlayerBase_InventoryComponent, character) : nullptr;
 		}
 
 		// =====================================================================
@@ -118,10 +118,10 @@ namespace BetterCheats::Panels::Inventory
 			if (!inv || columns <= 0 || rows <= 0)
 				return false;
 
-			if (inv->GridColumns == columns && inv->GridRows == rows)
+			if (BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridColumns, inv) == columns && BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridRows, inv) == rows)
 				return true;
 
-			if (inv->Slots.Num() == columns * rows)
+			if (BetterCheats::Fields::SlotCount(inv) == columns * rows)
 				inv->ServerResizeInventory(columns, rows + 1);
 
 			inv->ServerResizeInventory(columns, rows);
@@ -256,7 +256,7 @@ namespace BetterCheats::Panels::Inventory
 		{
 			if (!container) return 0.0f;
 
-			SDK::UGridPanel* grid = container->ItemGridPanel;
+			SDK::UGridPanel* grid = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrUW_InventoryContainer_ItemGridPanel, container);
 			if (!grid) return 0.0f;
 
 			SDK::UClass* slotClass = SDK::UWBP_InventorySlot_C::StaticClass();
@@ -271,7 +271,9 @@ namespace BetterCheats::Panels::Inventory
 				if (!panelSlot->Content->IsA(slotClass)) continue;
 
 				SDK::UWBP_InventorySlot_C* slot = static_cast<SDK::UWBP_InventorySlot_C*>(panelSlot->Content);
-				SDK::USizeBox* box = slot->SizeBox;
+				IPluginHooks* hooks = GetHooks();
+				SDK::USizeBox** boxAt = BetterCheats::Fields::WBP_InventorySlot_SizeBox.In(hooks ? hooks->ObjectProperties : nullptr, slot);
+				SDK::USizeBox* box = boxAt ? *boxAt : nullptr;
 				if (!box) continue;
 
 				// Captured once, from a slot nothing has written to yet. Slot
@@ -344,13 +346,13 @@ namespace BetterCheats::Panels::Inventory
 		{
 			// Scaled against the grid the game actually built, not the one that
 			// was asked for — a refused resize should not shrink the slots.
-			return g_wantFitToPanel.load() ? SolveSlotScale(inv->GridColumns, inv->GridRows) : 1.0f;
+			return g_wantFitToPanel.load() ? SolveSlotScale(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridColumns, inv), BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridRows, inv)) : 1.0f;
 		}
 
 		// Game thread, straight after the game has built a container's slots.
 		void OnSlotsBuilt(SDK::UCrUW_InventoryContainer* container)
 		{
-			if (!container || !container->ItemGridPanel)
+			if (!container || !BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrUW_InventoryContainer_ItemGridPanel, container))
 				return;
 
 			SDK::UCrInventoryComponent* inv = GetLocalInventory();
@@ -434,12 +436,12 @@ namespace BetterCheats::Panels::Inventory
 				// On a host the resize has already run; on a client it is still
 				// in flight, so a mismatch there means nothing yet.
 				SDK::AActor* owner = inv->GetOwner();
-				if (owner && owner->HasAuthority() && (inv->GridColumns != columns || inv->GridRows != rows))
+				if (owner && owner->HasAuthority() && (BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridColumns, inv) != columns || BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridRows, inv) != rows))
 				{
 					LOG_WARN("Inventory: the game would not resize the grid to %d x %d "
 						"(currently %d x %d, %d slots) — it will not shrink below the "
 						"slots that are in use.",
-						columns, rows, inv->GridColumns, inv->GridRows, inv->Slots.Num());
+						columns, rows, BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridColumns, inv), BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridRows, inv), BetterCheats::Fields::SlotCount(inv));
 					return;
 				}
 
@@ -499,9 +501,9 @@ namespace BetterCheats::Panels::Inventory
 				if (SDK::UCrInventoryComponent* inv = GetLocalInventory())
 				{
 					snap.inventoryFound = true;
-					snap.columns        = inv->GridColumns;
-					snap.rows           = inv->GridRows;
-					snap.slots          = inv->Slots.Num();
+					snap.columns        = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridColumns, inv);
+					snap.rows           = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridRows, inv);
+					snap.slots          = BetterCheats::Fields::SlotCount(inv);
 				}
 
 				snap.widgetFound = AnyContainerLive();
@@ -566,7 +568,7 @@ namespace BetterCheats::Panels::Inventory
 				{
 					console->Printf(sink, PluginConsoleLineKind::Output,
 						"Grid is %d x %d (%d slots). Usage: bc_invsize <columns> <rows>, minimum %d x %d.",
-						inv->GridColumns, inv->GridRows, inv->Slots.Num(), kMinGridColumns, kMinGridRows);
+						BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridColumns, inv), BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrInventoryComponent_GridRows, inv), BetterCheats::Fields::SlotCount(inv), kMinGridColumns, kMinGridRows);
 					return;
 				}
 
@@ -651,7 +653,7 @@ namespace BetterCheats::Panels::Inventory
 		}
 
 		// =====================================================================
-		// Item stack sizes. UAuItemDataBase::MaxStack is a plain int32
+		// Item stack sizes. UAuItemDataBase::MaxStack is a plain int32_t
 		// on the item TYPE's own CDO (AuItems_classes.hpp:290) -- same per-
 		// type-CDO shape as the weapon magazine/grenade fields in
 		// player_weapons.cpp, so it uses the exact same capture/write/restore/
@@ -707,7 +709,7 @@ namespace BetterCheats::Panels::Inventory
 		// Every tier sets an absolute stack size, and a size only ever RAISES
 		// an item: one whose own MaxStack is already higher keeps it, so no
 		// setting can shrink a cap below what a player is already holding.
-		// That makes 1 the global "off" value. MaxStack is a plain int32
+		// That makes 1 the global "off" value. MaxStack is a plain int32_t
 		// with no engine-side limit; 9999 keeps the slider usable and the
 		// count readable in an inventory slot.
 		constexpr int kStackFloor   = 1;
@@ -1033,8 +1035,8 @@ namespace BetterCheats::Panels::Inventory
 						StackEntry entry;
 						entry.item.Set(item);
 						entry.assetData  = assetData[i];
-						entry.uniqueName = item->UniqueItemName.ToString();
-						entry.name       = SDK::UKismetTextLibrary::Conv_TextToString(item->ItemName).ToString();
+						entry.uniqueName = BetterCheats::Fields::UniqueNameOf(item);
+						entry.name       = BetterCheats::Fields::DisplayNameOf(item);
 						if (entry.name.empty() || entry.name == "<MISSING STRING TABLE ENTRY>")
 							entry.name = entry.uniqueName;
 
@@ -1055,14 +1057,14 @@ namespace BetterCheats::Panels::Inventory
 							// (every size and override is still a default),
 							// so the current value serves until the rescan that
 							// ApplySavedConfig requests captures the real one.
-							int original = item->MaxStack;
-							const bool recovered = RecoverOriginal(StackComposeKey(entry.uniqueName), item->MaxStack, original);
+							int original = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_MaxStack, item);
+							const bool recovered = RecoverOriginal(StackComposeKey(entry.uniqueName), BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_MaxStack, item), original);
 							entry.originalMaxStack = original > 0 ? original : 1;
 							if (recovered)
 								g_stackOriginals[entry.uniqueName] = entry.originalMaxStack;
 						}
-						entry.canStack          = item->StackingType != SDK::ENxItemStackType::DoNotStack;
-						entry.category          = item->UIItemType;
+						entry.canStack          = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_StackingType, item) != SDK::ENxItemStackType::DoNotStack;
+						entry.category          = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_UIItemType, item);
 
 						items.push_back(std::move(entry));
 					}
@@ -1171,7 +1173,7 @@ namespace BetterCheats::Panels::Inventory
 
 					state.item.Set(item);
 
-					float valueF = static_cast<float>(item->MaxStack);
+					float valueF = static_cast<float>(BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_MaxStack, item));
 					const std::string key = StackComposeKey(e.uniqueName);
 
 					BetterCheats::ApplyComposedRow(state.composed, item, valueF, key, active,
@@ -1179,8 +1181,8 @@ namespace BetterCheats::Panels::Inventory
 						static_cast<float>(kStackFloor), static_cast<float>(kStackCeiling));
 
 					const int newValue = static_cast<int>(valueF + 0.5f);
-					if (item->MaxStack != newValue)
-						item->MaxStack = newValue;
+					if (int32_t* maxStack = BetterCheats::Fields::AuItemDataBase_MaxStack.In(item); maxStack && *maxStack != newValue)
+						*maxStack = newValue;
 				}
 			}
 			catch (...) {}
@@ -1200,12 +1202,12 @@ namespace BetterCheats::Panels::Inventory
 					continue;
 				}
 
-				float valueF = static_cast<float>(item->MaxStack);
+				float valueF = static_cast<float>(BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_MaxStack, item));
 				state.composed.Release(item, valueF);
 				auto known = g_stackOriginals.find(kv.first);
 				const int newValue = known != g_stackOriginals.end() ? known->second : static_cast<int>(valueF + 0.5f);
-				if (item->MaxStack != newValue)
-					item->MaxStack = newValue;
+				if (int32_t* maxStack = BetterCheats::Fields::AuItemDataBase_MaxStack.In(item); maxStack && *maxStack != newValue)
+					*maxStack = newValue;
 
 				BetterCheats::ClearComposeState(StackComposeKey(kv.first));
 			}
@@ -1628,7 +1630,7 @@ namespace BetterCheats::Panels::Inventory
 		constexpr float kGatherMultMax     = 5.0f;
 
 		// Sanity clamp on the multiplied result, same spirit as kStackCeiling
-		// above -- ResourceCount is a plain int32 with no engine-side range
+		// above -- ResourceCount is a plain int32_t with no engine-side range
 		// check of its own.
 		constexpr int kGatherResourceCeiling = 1000000;
 
@@ -1708,7 +1710,7 @@ namespace BetterCheats::Panels::Inventory
 				// session config loads; ApplySavedConfig rescans then.
 				const std::string key = "playerInventory.gather." + SanitizeStackKey(name);
 				int original = 0;
-				if (!RecoverOriginal(key, cdo->ResourceCount, original))
+				if (!RecoverOriginal(key, BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrGatherableBaseActor_ResourceCount, cdo), original))
 					continue;
 				if (original <= 0)
 					continue;   // no reward to scale
@@ -1739,8 +1741,8 @@ namespace BetterCheats::Panels::Inventory
 				if (!cdo)
 					continue;
 
-				if (cdo->ResourceCount != e.original)
-					cdo->ResourceCount = e.original;
+				if (int32_t* count = BetterCheats::Fields::CrGatherableBaseActor_ResourceCount.In(cdo); count && *count != e.original)
+					*count = e.original;
 				BetterCheats::ClearComposeState(e.key);
 			}
 		}
@@ -1781,14 +1783,14 @@ namespace BetterCheats::Panels::Inventory
 					if (desired > kGatherResourceCeiling) desired = kGatherResourceCeiling;
 					const bool active = desired != e.original;
 
-					float valueF = static_cast<float>(cdo->ResourceCount);
+					float valueF = static_cast<float>(BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrGatherableBaseActor_ResourceCount, cdo));
 					BetterCheats::ApplyComposedRow(e.composed, cdo, valueF, e.key, active,
 						static_cast<float>(desired), BetterCheats::ComposedAttribute::Mode::Absolute,
 						1.0f, static_cast<float>(kGatherResourceCeiling));
 
 					const int newValue = static_cast<int>(valueF + 0.5f);
-					if (cdo->ResourceCount != newValue)
-						cdo->ResourceCount = newValue;
+					if (int32_t* count = BetterCheats::Fields::CrGatherableBaseActor_ResourceCount.In(cdo); count && *count != newValue)
+						*count = newValue;
 				}
 			}
 			catch (...) {}

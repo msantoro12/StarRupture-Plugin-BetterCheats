@@ -296,10 +296,15 @@ namespace BetterCheats::Panels::Building
 
 		bool IsRelaxedPieceInHabitatSlot(SDK::ACrAPHelper* helper)
 		{
-			if (!helper || !helper->BuildingData || !IsRelaxedPiece(helper->BuildingData->BuildingID))
+			SDK::UCrBuildingData* buildingData = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrAPHelper_BuildingData, helper);
+			const SDK::ECrBuildingID* const buildingId = buildingData ? BetterCheats::Fields::AuActorPlacementData_BuildingID.In(static_cast<const void*>(buildingData)) : nullptr;
+			if (!helper || !buildingId || !IsRelaxedPiece(*buildingId))
 				return false;
 
-			for (SDK::AActor* snapped : helper->SnappedActors)
+			const SDK::TArray<SDK::AActor*>* snappedActors = BetterCheats::Fields::CrAPHelper_SnappedActors.In(static_cast<const void*>(helper));
+			if (!snappedActors)
+				return false;
+			for (SDK::AActor* snapped : *snappedActors)
 			{
 				if (IsHabitat(snapped))
 					return true;
@@ -380,7 +385,7 @@ namespace BetterCheats::Panels::Building
 		void* __fastcall Detour_GetSnappedSocket(void* self, const SDK::UAuActorPlacementData* data, void* a3, void* a4,
 			void* a5, void* a6, void* a7, void* a8, void* a9, void* a10)
 		{
-			const bool bench = g_buildBenchesAnywhere.load() && data && IsBenchId(data->BuildingID);
+			const bool bench = g_buildBenchesAnywhere.load() && data && IsBenchId(BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuActorPlacementData_BuildingID, data));
 			t_snappingBench = bench;
 			void* socket = g_originalGetSnappedSocket(self, data, a3, a4, a5, a6, a7, a8, a9, a10);
 			t_snappingBench = false;
@@ -447,7 +452,7 @@ namespace BetterCheats::Panels::Building
 			SDK::AGameStateBase* gs = SDK::UGameplayStatics::GetGameState(world);
 			if (!gs) return nullptr;
 
-			return static_cast<SDK::ACrGameStateBase*>(gs)->TechnologyKeeper;
+			return BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrGameStateBase_TechnologyKeeper, static_cast<SDK::ACrGameStateBase*>(gs));
 		}
 	}
 

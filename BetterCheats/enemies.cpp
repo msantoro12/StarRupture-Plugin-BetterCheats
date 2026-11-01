@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include "map_fields.h"
 
 namespace BetterCheats::Panels::Enemies
 {
@@ -208,7 +209,7 @@ namespace BetterCheats::Panels::Enemies
 					continue;
 
 				auto* enemy = static_cast<SDK::AMassEnemyCharacterBase*>(obj);
-				if (enemy->bIsInPool) // pooled/inactive — not a live world actor
+				if (BetterCheats::Fields::ValueOr(BetterCheats::Fields::MassEnemyCharacterBase_bIsInPool, enemy)) // pooled/inactive — not a live world actor
 					continue;
 
 				SDK::UMassAgentComponent* agent = nullptr;
@@ -286,15 +287,15 @@ namespace BetterCheats::Panels::Enemies
 			if (it == g_attackRangeCache.end())
 			{
 				AttackRangeCache cache;
-				cache.distance         = actor->AllowedAttackDistance;
-				cache.coneHalfAngle    = actor->AllowedAttackConeHalfAngle;
-				cache.buildingDistance = actor->AllowedBuildingAttackDistance;
+				cache.distance         = BetterCheats::Fields::ValueOr(BetterCheats::Fields::MassEnemyCharacterBase_AllowedAttackDistance, actor);
+				cache.coneHalfAngle    = BetterCheats::Fields::ValueOr(BetterCheats::Fields::MassEnemyCharacterBase_AllowedAttackConeHalfAngle, actor);
+				cache.buildingDistance = BetterCheats::Fields::ValueOr(BetterCheats::Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance, actor);
 				g_attackRangeCache.emplace(actor, cache);
 			}
 
-			actor->AllowedAttackDistance         = 0.0f;
-			actor->AllowedAttackConeHalfAngle    = 0.0f;
-			actor->AllowedBuildingAttackDistance = 0.0f;
+			BetterCheats::Fields::Store(BetterCheats::Fields::MassEnemyCharacterBase_AllowedAttackDistance, actor, 0.0f);
+			BetterCheats::Fields::Store(BetterCheats::Fields::MassEnemyCharacterBase_AllowedAttackConeHalfAngle, actor, 0.0f);
+			BetterCheats::Fields::Store(BetterCheats::Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance, actor, 0.0f);
 		}
 
 		// Restores whatever EnforceDisableAI zeroed, for actors still in g_enemies
@@ -318,9 +319,9 @@ namespace BetterCheats::Panels::Enemies
 					auto it = g_attackRangeCache.find(actor);
 					if (it != g_attackRangeCache.end())
 					{
-						actor->AllowedAttackDistance         = it->second.distance;
-						actor->AllowedAttackConeHalfAngle    = it->second.coneHalfAngle;
-						actor->AllowedBuildingAttackDistance = it->second.buildingDistance;
+						BetterCheats::Fields::Store(BetterCheats::Fields::MassEnemyCharacterBase_AllowedAttackDistance, actor, it->second.distance);
+						BetterCheats::Fields::Store(BetterCheats::Fields::MassEnemyCharacterBase_AllowedAttackConeHalfAngle, actor, it->second.coneHalfAngle);
+						BetterCheats::Fields::Store(BetterCheats::Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance, actor, it->second.buildingDistance);
 					}
 				}
 				catch (...)
