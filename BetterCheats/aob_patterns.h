@@ -32,23 +32,6 @@ namespace BetterCheats::AOB
 		int32_t     followRel32At = -1;
 	};
 
-	// UCrGameInstance::ServerSessionName — offset within UCrGameInstance,
-		// not exposed by the generated SDK (folded into trailing padding bytes).
-	constexpr const std::ptrdiff_t kServerSessionNameOffset = 0x290;
-
-	// UCrEnviroWaveTimerSubsystem — the countdown to the next rupture. The
-	// generated SDK folds everything before TimerActor into Pad_30, but these
-	// are what actually gate the cycle: Tick() only decrements NextWaveTimer
-	// while !bPause && bWaitingForNextWave, and the whole block is persisted
-	// into the save (FCrEnviroWaveTimerSaveData) so a bad value survives a
-	// reload. ACrWaveTimerActor::bPause is only a replicated HUD mirror.
-	constexpr const std::ptrdiff_t kWaveTimerWaitingDurationOffset    = 0x78; // float
-	constexpr const std::ptrdiff_t kWaveTimerNextWaveTimerOffset      = 0x7C; // float, seconds remaining
-	constexpr const std::ptrdiff_t kWaveTimerWaitingForNextWaveOffset = 0x80; // bool
-	constexpr const std::ptrdiff_t kWaveTimerPauseOffset              = 0x81; // bool
-	constexpr const std::ptrdiff_t kWaveTimerStopWavesOffset          = 0x83; // bool
-
-
 	// -------------------------------------------------------------------------
 	// Example / template (remove when first real pattern is added)
 	// -------------------------------------------------------------------------
@@ -84,9 +67,8 @@ namespace BetterCheats::AOB
 	// Formerly GetResourceConditionResult — renamed by the game, same contract.
 	// Found through its call site (the call at +3), which is the same on the
 	// current build and CL-128786; the function's own entry differs between them.
-	constexpr FunctionPattern GetPlacementResourceConditionResult[] = {
-		{ "48 8B C8 E8 ?? ?? ?? ?? 0F B6 D8 88 9F ?? ?? 00 00", 3 },
-	};
+	constexpr FunctionPattern GetPlacementResourceConditionResult =
+		{ "48 8B C8 E8 ?? ?? ?? ?? 0F B6 D8 88 9F ?? ?? 00 00", 3 };
 
 	// Class::Function  UAuActorPlacementComponent::AddPoint
 	// Parameters       (UAuActorPlacementComponent* this) -> FScriptContainerElement*
@@ -115,7 +97,8 @@ namespace BetterCheats::AOB
 	// pattern pinned both the imm8 encoding and the modrm bytes of those moves,
 	// which is why it stopped matching. The frame size is wildcarded. CL-128786
 	// re-allocated its registers again, so the second pattern is that build's;
-	// it matches nothing on the current build.
+	// it matches nothing on the current build. The loader's map has no row for
+	// this function yet, so these stay the plugin's own fallback.
 	constexpr FunctionPattern CheckStability_Custom[] = {
 		{ "40 53 57 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F9 48 85 D2 75 ?? 32 C0" },
 		{ "40 53 55 56 48 81 EC ?? ?? ?? ?? 48 8B DA 48 8B F1" },
@@ -136,7 +119,8 @@ namespace BetterCheats::AOB
 	// all changed bytes. The register bytes and the member offset are wildcarded;
 	// the two register saves after the early-out keep the match unique. The
 	// second pattern is CL-128786's, whose code differs; it matches nothing on
-	// the current build.
+	// the current build. The loader's map has no row for this function yet, so
+	// these stay the plugin's own fallback.
 	constexpr FunctionPattern CheckStability_DynamicPillar[] = {
 		{ "40 56 48 83 EC ?? 48 83 B9 ?? ?? ?? ?? ?? 48 8B F1 75 ?? 32 C0" },
 		{ "48 89 74 24 18 57 48 83 EC 60 48 8B F1 E8 ?? ?? ?? ?? 48 8B C8 E8 ?? ?? ?? ?? 48 83 BE ?? ?? ?? ?? 00" },
@@ -349,9 +333,8 @@ namespace BetterCheats::AOB
 	// HandleOnInventorySizeChanged, so it runs each time the grid is drawn or
 	// rebuilt. Found through a tail call to it (the jmp at +24) in a caller that
 	// is the same on the current build and CL-128786.
-	constexpr FunctionPattern InventoryContainer_InitInventorySlots[] = {
-		{ "48 8B 89 60 04 00 00 48 8B 01 FF 90 10 03 00 00 48 8B CB 48 83 C4 20 5B E9", 24 },
-	};
+	constexpr FunctionPattern InventoryContainer_InitInventorySlots =
+		{ "48 8B 89 60 04 00 00 48 8B 01 FF 90 10 03 00 00 48 8B CB 48 83 C4 20 5B E9", 24 };
 
 	// Class::Function  UE::StructUtils::GetStructInstanceCrc32
 	// Parameters       (const UScriptStruct* ScriptStruct, const uint8* StructMemory, uint32 CRC) -> uint32

@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include "plugin_map.h"
+#include "map_fields.h"
 
 namespace BetterCheats::Panels::Building
 {
@@ -83,8 +85,6 @@ namespace BetterCheats::Panels::Building
 		// so we pass nullptr/0 safely in both directions.
 		// This flag may be serialised into the save file — the UI warns accordingly.
 		// -------------------------------------------------------------------------
-
-		constexpr ptrdiff_t kBUnlockAllBuildingsOffset = 0x03A8;
 
 		bool g_unlockAllBuildings     = false;
 		bool g_prevUnlockAllBuildings = false;
@@ -296,10 +296,15 @@ namespace BetterCheats::Panels::Building
 
 		bool IsRelaxedPieceInHabitatSlot(SDK::ACrAPHelper* helper)
 		{
-			if (!helper || !helper->BuildingData || !IsRelaxedPiece(helper->BuildingData->BuildingID))
+			SDK::UCrBuildingData* buildingData = BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrAPHelper_BuildingData, helper);
+			const SDK::ECrBuildingID* const buildingId = buildingData ? BetterCheats::Fields::AuActorPlacementData_BuildingID.In(static_cast<const void*>(buildingData)) : nullptr;
+			if (!helper || !buildingId || !IsRelaxedPiece(*buildingId))
 				return false;
 
-			for (SDK::AActor* snapped : helper->SnappedActors)
+			const SDK::TArray<SDK::AActor*>* snappedActors = BetterCheats::Fields::CrAPHelper_SnappedActors.In(static_cast<const void*>(helper));
+			if (!snappedActors)
+				return false;
+			for (SDK::AActor* snapped : *snappedActors)
 			{
 				if (IsHabitat(snapped))
 					return true;
@@ -380,7 +385,7 @@ namespace BetterCheats::Panels::Building
 		void* __fastcall Detour_GetSnappedSocket(void* self, const SDK::UAuActorPlacementData* data, void* a3, void* a4,
 			void* a5, void* a6, void* a7, void* a8, void* a9, void* a10)
 		{
-			const bool bench = g_buildBenchesAnywhere.load() && data && IsBenchId(data->BuildingID);
+			const bool bench = g_buildBenchesAnywhere.load() && data && IsBenchId(BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuActorPlacementData_BuildingID, data));
 			t_snappingBench = bench;
 			void* socket = g_originalGetSnappedSocket(self, data, a3, a4, a5, a6, a7, a8, a9, a10);
 			t_snappingBench = false;
@@ -422,7 +427,7 @@ namespace BetterCheats::Panels::Building
 		SDK::ACrPlayerControllerBase* GetLocalController()
 		{
 			SDK::UWorld* world = nullptr;
-			try { world = SDK::UWorld::GetWorld(); }
+			try { world = PluginSdkRuntime::GetWorld(); }
 			catch (...) { return nullptr; }
 			if (!world) return nullptr;
 
@@ -440,14 +445,14 @@ namespace BetterCheats::Panels::Building
 		SDK::ACrTechnologyKeeper* GetTechnologyKeeper()
 		{
 			SDK::UWorld* world = nullptr;
-			try { world = SDK::UWorld::GetWorld(); }
+			try { world = PluginSdkRuntime::GetWorld(); }
 			catch (...) { return nullptr; }
 			if (!world) return nullptr;
 
 			SDK::AGameStateBase* gs = SDK::UGameplayStatics::GetGameState(world);
 			if (!gs) return nullptr;
 
-			return static_cast<SDK::ACrGameStateBase*>(gs)->TechnologyKeeper;
+			return BetterCheats::Fields::ValueOr(BetterCheats::Fields::CrGameStateBase_TechnologyKeeper, static_cast<SDK::ACrGameStateBase*>(gs));
 		}
 	}
 
@@ -672,7 +677,8 @@ namespace BetterCheats::Panels::Building
 			{
 				if (SDK::ACrTechnologyKeeper* keeper = GetTechnologyKeeper())
 				{
-					*reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(keeper) + kBUnlockAllBuildingsOffset) = false;
+					if (bool* unlockAll = BetterCheats::Fields::CrTechnologyKeeper_bUnlockAllBuildings.In(keeper))
+						*unlockAll = false;
 					if (g_checkAvailableBuildings)
 						g_checkAvailableBuildings(keeper, nullptr, 0);
 				}
@@ -701,7 +707,8 @@ namespace BetterCheats::Panels::Building
 				LOG_DEBUG("Building: TechnologyKeeper = 0x%llx", reinterpret_cast<unsigned long long>(keeper));
 				if (keeper)
 				{
-					*reinterpret_cast<bool*>(reinterpret_cast<uint8_t*>(keeper) + kBUnlockAllBuildingsOffset) = g_unlockAllBuildings;
+					if (bool* unlockAll = BetterCheats::Fields::CrTechnologyKeeper_bUnlockAllBuildings.In(keeper))
+						*unlockAll = g_unlockAllBuildings;
 					if (g_checkAvailableBuildings)
 					{
 						LOG_DEBUG("Building: calling CheckAvailableBuildings (keeper=0x%llx, bUnlockAll=%d)",

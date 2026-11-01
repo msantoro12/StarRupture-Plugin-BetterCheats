@@ -1,6 +1,8 @@
 #include "aob_resolver.h"
 #include "aob_patterns.h"
 #include "plugin_helpers.h"
+#include "Engine_classes.hpp"
+#include "plugin_map.h"
 
 namespace BetterCheats::AOB
 {
@@ -13,6 +15,8 @@ namespace BetterCheats::AOB
 		// so they all declare PLUGIN_SCAN_FUNCTION_START. That is the whole point
 		// of the kind: a pattern that lands 0x37 bytes into an unrelated function
 		// still matches, and without a kind the loader hands that address back.
+		// The key is the loader's map key for the function; the pattern is this
+		// plugin's own, for the build it was compiled against.
 		//
 		// Optional is a label on the report line, not a lighter verdict: a miss
 		// refuses the plugin either way. It marks the addresses the feature
@@ -20,20 +24,17 @@ namespace BetterCheats::AOB
 		void ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
 			uintptr_t& out, const char* hookName, const char* pattern, int32_t followRel32At = -1)
 		{
-			PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
-			req.hookName = hookName;
-			req.pattern  = pattern;
-			req.kind     = PLUGIN_SCAN_FUNCTION_START;
-			req.flags    = PLUGIN_SCAN_FLAG_OPTIONAL;
-			if (followRel32At >= 0)
-			{
-				req.flags        |= PLUGIN_SCAN_FLAG_FOLLOW_REL32;
-				req.followRel32At = followRel32At;
-			}
-
-			out = scanner->Resolve(self, &req);
+			out = PluginMap::Function(scanner, self, hookName, pattern, PLUGIN_SCAN_FUNCTION_START,
+				PLUGIN_SCAN_FLAG_OPTIONAL | (followRel32At >= 0 ? PLUGIN_SCAN_FLAG_FOLLOW_REL32 : 0u),
+				0, followRel32At >= 0 ? followRel32At : 0);
 			if (!out)
 				LOG_WARN("AOB: %s did not resolve - the feature using it will be unavailable.", hookName);
+		}
+
+		void ResolveFunction(IPluginSelf* self, IPluginHookScanner* scanner,
+			uintptr_t& out, const char* hookName, const FunctionPattern& function)
+		{
+			ResolveFunction(self, scanner, out, hookName, function.pattern, function.followRel32At);
 		}
 
 		// The start of the function addr belongs to, following chained unwind
@@ -186,15 +187,8 @@ namespace BetterCheats::AOB
 		// UCheatManager* in RCX safe.
 		void ResolveInitCheatManager(IPluginSelf* self, IPluginHookScanner* scanner)
 		{
-			static constexpr const char* kHookName = "UCheatManager::InitCheatManager";
-
-			PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
-			req.hookName = kHookName;
-			req.pattern  = CheatManager_InitCheatManager;
-			req.kind     = PLUGIN_SCAN_FUNCTION_START;
-			req.flags    = PLUGIN_SCAN_FLAG_OPTIONAL;
-
-			const uintptr_t addr = scanner->Resolve(self, &req);
+			const uintptr_t addr = PluginMap::Function(scanner, self, "UCheatManager::InitCheatManager",
+				CheatManager_InitCheatManager, PLUGIN_SCAN_FUNCTION_START, PLUGIN_SCAN_FLAG_OPTIONAL);
 			if (!addr)
 			{
 				LOG_WARN("DevMenus: UCheatManager::InitCheatManager unresolved - "

@@ -24,6 +24,9 @@
 #include <Windows.h>
 #include <cstdio>
 #include <cstring>
+#include "Engine_classes.hpp"
+#include "plugin_map.h"
+#include "map_fields.h"
 
 static IPluginSelf* g_self = nullptr;
 static bool g_enabled = true;
@@ -61,7 +64,12 @@ static PluginInfo s_pluginInfo = {
 	"AlienX",
 	"Modular in-game cheat menu for StarRupture",
 	PLUGIN_INTERFACE_VERSION,
-	PLUGIN_TARGET_CLIENT
+	PLUGIN_TARGET_CLIENT,
+	PLUGIN_GAME_BUILT_CL,
+	// PLUGIN_MAP_MIGRATED is not set yet: it needs the loader's admission by built
+	// CL and the CI check of the used set. Until then the plugin runs only on
+	// the game build it was compiled for.
+	0
 };
 
 // Keybind callback — fires on key press to toggle the menu
@@ -176,10 +184,15 @@ extern "C" {
 		g_self = self;
 
 		BetterCheats::AOB::ResolveAll(self, scanner);
+		BetterCheats::Fields::Resolve(self, scanner);
 	}
 
 	__declspec(dllexport) bool PluginInit(IPluginSelf* self)
 	{
+		// First, before any early return (a disabled plugin included): off its game
+		// build the loader refuses a plugin whose PluginInit did not take the globals.
+		PluginSdkRuntime::Init(self->hooks);
+
 		g_self = self;
 
 		LOG_INFO("BetterCheats initializing...");
