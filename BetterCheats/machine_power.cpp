@@ -798,10 +798,11 @@ namespace BetterCheats::Panels::Power
 				if (trait && params && electricity)
 				{
 					const SDK::FCrElectricityParameters oldParams = *params;
+					const float oldValue = *electricity;
 
 					*electricity = item.value;
 					LOG_INFO("Power: set ElectricityValue %.2f -> %.2f on trait %p ('%s')%s.",
-						oldParams.ElectricityValue, item.value, static_cast<void*>(trait), item.assetName.c_str(),
+						oldValue, item.value, static_cast<void*>(trait), item.assetName.c_str(),
 						item.clearOverride ? " [reset to default]" : "");
 
 					// Update buildings of this type already placed in the world -

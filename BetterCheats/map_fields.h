@@ -99,6 +99,10 @@ namespace BetterCheats::Fields
 	inline auto CrEnviroWaveTimerSubsystem_bPause              = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bPause, 0x81);
 	inline auto CrEnviroWaveTimerSubsystem_bStopWaves          = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bStopWaves, 0x83);
 
+	// FMassEnemyHealthFragment: a Mass fragment, not a UObject, so Dumper-7 pads it out as
+	// unnamed bytes and HP (the first member) has no name in the SDK. Confirmed from the PDB.
+	inline auto MassEnemyHealthFragment_HP = BC_NATIVE(float, FMassEnemyHealthFragment, HP, 0x0);
+
 	// UCrUW_InventoryContainer: a private TWeakObjectPtr<UCrInventoryComponent>
 	inline auto CrUW_InventoryContainer_InventoryComponent = BC_NATIVE(SDK::FWeakObjectPtr, UCrUW_InventoryContainer, InventoryComponent, 0x468);
 
@@ -404,6 +408,7 @@ namespace BetterCheats::Fields
 			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings,
 			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
 			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
+			MassEnemyHealthFragment_HP,
 			AuAddedItem_Size, CrSkillData_Size, CrElectricityParameters_Size,
 			CrCharacterPlayerBase_ADSMoveSpeed, CrCharacterPlayerBase_AccelerationAndDeceleration, CrCharacterPlayerBase_CrouchedMoveSpeed,
 			CrCharacterPlayerBase_DoubleJumpEnergyUsage, CrCharacterPlayerBase_DurationOfAccelerationToSprint, CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint,
@@ -547,7 +552,8 @@ namespace BetterCheats::Features
 		Fields::AuWeaponItemDataBase_Spread.key, Fields::AuWeaponItemDataBase_AimCameraSpeed.key,
 		Fields::AuWeaponItemDataBase_RequiredItem.key, Fields::CrWeaponItemDataBase_PossibleEnemiesHitPerTrace.key,
 		Fields::CrGrenadeWeaponItemDataBase_GrenadeThrowCostOfGrenadeCharge.key, Fields::CrWeaponModDataAsset_BaseDamageFalloffCurveOverride.key,
-		Fields::AuWeaponItemDataBase_bIsUsingDamageFalloff.key
+		Fields::AuWeaponItemDataBase_bIsUsingDamageFalloff.key, Fields::MassEnemyCharacterBase_bIsInPool.key,
+		Fields::MassEnemyHealthFragment_HP.key, Fields::AuAddedItem_Amount.key, Fields::AuAddedItem_Size.key
 	} };
 
 	inline PluginMap::Feature Mining{ "mining-tools", "Mining tool tuning", {
@@ -602,7 +608,7 @@ namespace BetterCheats::Features
 		"FWeakObjectPtr::operator=(FObjectPtr)", "UMassActorSubsystem::GetEntityHandleFromActor",
 		"FMassEntityManager::InternalGetFragmentDataPtr", Fields::MassEnemyCharacterBase_bIsInPool.key,
 		Fields::MassEnemyCharacterBase_AllowedAttackDistance.key, Fields::MassEnemyCharacterBase_AllowedAttackConeHalfAngle.key,
-		Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance.key
+		Fields::MassEnemyCharacterBase_AllowedBuildingAttackDistance.key, Fields::MassEnemyHealthFragment_HP.key
 	} };
 
 	inline PluginMap::Feature Power{ "machine-power", "Machine power", {

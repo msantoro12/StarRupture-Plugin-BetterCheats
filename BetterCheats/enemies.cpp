@@ -27,15 +27,6 @@ namespace BetterCheats::Panels::Enemies
 		std::atomic<bool> g_disableAI{ false };
 		std::atomic<bool> g_oneHitKill{ false };
 
-		// Minimal view over the native FMassEnemyHealthFragment layout (confirmed via
-		// PDB-backed IDA inspection — Dumper-7 can't reflect it since HP isn't a
-		// UPROPERTY, so the SDK header pads it out as unnamed bytes). Only the first
-		// field is needed here, so this stands in for the full struct.
-		struct FMassEnemyHealthFragmentView
-		{
-			float HP;
-		};
-
 		// Pairs each tracked enemy actor with its UMassAgentComponent — the official
 		// handle the One-Hit Kill fallback uses (KillEntity), found via
 		// AActor::GetComponentByClass since AMassEnemyCharacterBase doesn't expose it
@@ -124,7 +115,7 @@ namespace BetterCheats::Panels::Enemies
 		std::mutex        g_snapshotMutex;
 		EnemiesSnapshot   g_snapshot;
 
-		FMassEnemyHealthFragmentView* ResolveHealthFragment(SDK::AMassEnemyCharacterBase* actor);
+		void* ResolveHealthFragment(SDK::AMassEnemyCharacterBase* actor);
 
 		// The FMassEntityManager the entity subsystem owns
 		// (TSharedPtr<FMassEntityManager> at +0x38 — see UMassEntitySubsystem's
@@ -242,7 +233,8 @@ namespace BetterCheats::Panels::Enemies
 			}
 		}
 
-		// Resolves the enemy's live FMassEnemyHealthFragment, or nullptr if any link
+		// Resolves the enemy's live FMassEnemyHealthFragment (read its HP through
+		// Fields::MassEnemyHealthFragment_HP), or nullptr if any link
 		// in the chain (actor-key build, entity-handle lookup, fragment pointer)
 		// isn't available. Called fresh every tick from EnforceOneHitKill —
 		// deliberately not cached, see that function's comment for why.
@@ -251,7 +243,7 @@ namespace BetterCheats::Panels::Enemies
 		// UMassActorSubsystem::GetEntityHandleFromActor — the authority-side
 		// lookup, which works for every Mass actor regardless of replication
 		// state or whether it has a UMassAgentComponent attached.
-		FMassEnemyHealthFragmentView* ResolveHealthFragment(SDK::AMassEnemyCharacterBase* actor)
+		void* ResolveHealthFragment(SDK::AMassEnemyCharacterBase* actor)
 		{
 			if (!actor || !g_buildActorKey || !g_getEntityHandle || !g_getFragmentDataPtr || !g_healthFragmentStruct)
 				return nullptr;
@@ -271,8 +263,7 @@ namespace BetterCheats::Panels::Enemies
 			if (handle.Index == 0)
 				return nullptr;
 
-			void* fragmentPtr = g_getFragmentDataPtr(entityManager, handle, g_healthFragmentStruct);
-			return reinterpret_cast<FMassEnemyHealthFragmentView*>(fragmentPtr);
+			return g_getFragmentDataPtr(entityManager, handle, g_healthFragmentStruct);
 		}
 
 		void EnforceDisableAI(SDK::AMassEnemyCharacterBase* actor)
@@ -351,7 +342,7 @@ namespace BetterCheats::Panels::Enemies
 		// entity, so re-resolving here is the actual safety net.
 		void EnforceOneHitKill(SDK::AMassEnemyCharacterBase* actor, SDK::UMassAgentComponent* agent)
 		{
-			FMassEnemyHealthFragmentView* healthFragment = nullptr;
+			void* healthFragment = nullptr;
 			try { healthFragment = ResolveHealthFragment(actor); }
 			catch (...) { healthFragment = nullptr; }
 
@@ -359,8 +350,9 @@ namespace BetterCheats::Panels::Enemies
 			{
 				try
 				{
-					if (healthFragment->HP > 1.0f)
-						healthFragment->HP = 1.0f;
+					float* hp = BetterCheats::Fields::MassEnemyHealthFragment_HP.In(healthFragment);
+					if (hp && *hp > 1.0f)
+						*hp = 1.0f;
 				}
 				catch (...)
 				{
@@ -513,11 +505,11 @@ namespace BetterCheats::Panels::Enemies
 			return false;
 		try
 		{
-			const FMassEnemyHealthFragmentView* fragment =
-				ResolveHealthFragment(static_cast<SDK::AMassEnemyCharacterBase*>(actor));
-			if (!fragment)
+			const void* fragment = ResolveHealthFragment(static_cast<SDK::AMassEnemyCharacterBase*>(actor));
+			const float* value = BetterCheats::Fields::MassEnemyHealthFragment_HP.In(fragment);
+			if (!value)
 				return false;
-			hp = fragment->HP;
+			hp = *value;
 			return true;
 		}
 		catch (...) { return false; }
