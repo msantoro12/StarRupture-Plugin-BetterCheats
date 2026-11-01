@@ -301,9 +301,16 @@ namespace BetterCheats::Panels::Building
 			if (!helper || !buildingId || !IsRelaxedPiece(*buildingId))
 				return false;
 
-			const SDK::TArray<SDK::AActor*>* snappedActors = BetterCheats::Fields::CrAPHelper_SnappedActors.In(static_cast<const void*>(helper));
+			IPluginHooks* const pluginHooks = GetHooks();
+			const SDK::TArray<SDK::AActor*>* snappedActors = BetterCheats::Fields::CrAPHelper_SnappedActors.In(pluginHooks ? pluginHooks->ObjectProperties : nullptr, helper);
 			if (!snappedActors)
+			{
+				// This build's ACrAPHelper has no SnappedActors: leave collision alone.
+				static std::atomic<bool> s_logged{ false };
+				if (!s_logged.exchange(true))
+					LOG_WARN("Building: ACrAPHelper::SnappedActors not found on this game build; benches and windows anywhere will not relax collision");
 				return false;
+			}
 			for (SDK::AActor* snapped : *snappedActors)
 			{
 				if (IsHabitat(snapped))

@@ -277,7 +277,9 @@ namespace BetterCheats::Fields
 
 	// ACrAPHelper
 	inline auto CrAPHelper_BuildingData = BC_FIELD(ACrAPHelper, BuildingData);
-	inline auto CrAPHelper_SnappedActors = BC_FIELD(ACrAPHelper, SnappedActors);
+	// Absent on some builds (CL-128786 has no such member): found by name on first
+	// use, null there, and the one feature that reads it turns itself off.
+	inline PluginLazyField<SDK::TArray<SDK::AActor*>> CrAPHelper_SnappedActors{ "SnappedActors" };
 
 	// ACrPlayerControllerBase
 	inline auto CrPlayerControllerBase_PlayerSkills = BC_FIELD(ACrPlayerControllerBase, PlayerSkills);
@@ -454,7 +456,7 @@ namespace BetterCheats::Fields
 			AuAddedItem_Amount, CrElectricityTrait_Parameters, CrElectricityParameters_ElectricityValue,
 			CrElectricityParameters_Type, AuActorPlacementData_EntityType, AuActorPlacementData_BuildingID,
 			AuAPMassSpawnedEntityType_EntityConfig, CrBuildingData_BuildingName, CrAPHelper_BuildingData,
-			CrAPHelper_SnappedActors, CrPlayerControllerBase_PlayerSkills, CrSkillData_Skill,
+			CrPlayerControllerBase_PlayerSkills, CrSkillData_Skill,
 			CrSkillData_Level, CrSkillData_Experience, CrGameStateBase_CorporationsOwner,
 			CrGameStateBase_TechnologyKeeper, CrCorporationsOwner_DataPoints, CrEnviroWaveTimerSubsystem_TimerActor,
 			CrWaveTimerActor_bPause
