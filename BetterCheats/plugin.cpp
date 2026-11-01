@@ -26,6 +26,7 @@
 #include <cstring>
 #include "Engine_classes.hpp"
 #include "plugin_map.h"
+#include "map_fields.h"
 
 static IPluginSelf* g_self = nullptr;
 static bool g_enabled = true;
@@ -182,6 +183,7 @@ extern "C" {
 		g_self = self;
 
 		BetterCheats::AOB::ResolveAll(self, scanner);
+		BetterCheats::Fields::Resolve(self, scanner);
 	}
 
 	__declspec(dllexport) bool PluginInit(IPluginSelf* self)

@@ -1,4 +1,5 @@
 #include "player_weapons.h"
+#include "map_fields.h"
 #include "plugin_helpers.h"
 #include "session_config.h"
 #include "aob_resolver.h"
@@ -46,7 +47,7 @@ namespace BetterCheats::Panels::Weapons
 		// ACrCharacterPlayerBase::WeaponAttributes. The set belongs to the character and
 		// applies to whatever is equipped, so per-weapon profiles work by writing the
 		// equipped weapon's profile every tick.
-		using WeaponAttr = SDK::FGameplayAttributeData SDK::UCrWeaponAttributeSet::*;
+		using WeaponAttr = const PluginField<SDK::FGameplayAttributeData>*;
 
 		struct AttrDef
 		{
@@ -68,29 +69,29 @@ namespace BetterCheats::Panels::Weapons
 		};
 
 		const AttrDef kAttrs[kAttrCount] = {
-			{ "Damage",             "damage",   &SDK::UCrWeaponAttributeSet::DamageModMultiplier,
+			{ "Damage",             "damage",   &BetterCheats::Fields::CrWeaponAttributeSet_DamageModMultiplier,
 			  1.0f, 0.10f,  25.0f, 0.05f, "%.2fx", "Multiplies the weapon's base damage. Attachment and upgrade bonuses\nstill add on top." },
-			{ "Fire Rate",          "fireRate", &SDK::UCrWeaponAttributeSet::FireRateModMultiplier,
+			{ "Fire Rate",          "fireRate", &BetterCheats::Fields::CrWeaponAttributeSet_FireRateModMultiplier,
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Multiplies the weapon's base rounds per second. Attachment and\nupgrade bonuses still add on top." },
-			{ "Reload Speed",       "reload",   &SDK::UCrWeaponAttributeSet::ReloadSpeedModMultiplier,
+			{ "Reload Speed",       "reload",   &BetterCheats::Fields::CrWeaponAttributeSet_ReloadSpeedModMultiplier,
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Higher is faster. Multiplies the weapon's base value. Attachment and\nupgrade bonuses still add on top." },
 			// .member unused: Tick() special-cases this row onto the weapon data
 			// asset's BaseMagazine.Value instead (g_composedMagazine) -- the clip-size
 			// getter never reads MaxMagAmmoModOffset at all. Kept here only so every
 			// row still has a valid member pointer for this table's shape.
-			{ "Magazine Size",      "magazine", &SDK::UCrWeaponAttributeSet::MaxMagAmmoModOffset,
+			{ "Magazine Size",      "magazine", &BetterCheats::Fields::CrWeaponAttributeSet_MaxMagAmmoModOffset,
 			  0.0f, -100.0f, 999.0f, 1.0f, "%.0f", "Flat OFFSET added to this weapon's magazine (its real base\ncapacity, not an attachment-style modifier). Negative shrinks it." },
-			{ "Damage Falloff",     "falloff",  &SDK::UCrWeaponAttributeSet::DamageFallOffModMultiplier,
+			{ "Damage Falloff",     "falloff",  &BetterCheats::Fields::CrWeaponAttributeSet_DamageFallOffModMultiplier,
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Multiplies the weapon's base effective range before damage drops\noff. Attachment bonuses still add on top." },
-			{ "Recoil",             "recoil",   &SDK::UCrWeaponAttributeSet::RecoilModMultiplier,
+			{ "Recoil",             "recoil",   &BetterCheats::Fields::CrWeaponAttributeSet_RecoilModMultiplier,
 			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "Multiplies the weapon's base recoil. Attachment bonuses still add\non top. 0 removes recoil entirely." },
-			{ "Spread",             "spread",   &SDK::UCrWeaponAttributeSet::SpreadModMultiplier,
+			{ "Spread",             "spread",   &BetterCheats::Fields::CrWeaponAttributeSet_SpreadModMultiplier,
 			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "Multiplies the weapon's base spread. Attachment bonuses still add\non top. 0 is perfect accuracy." },
-			{ "Sway",               "sway",     &SDK::UCrWeaponAttributeSet::SwayModMultiplier,
+			{ "Sway",               "sway",     &BetterCheats::Fields::CrWeaponAttributeSet_SwayModMultiplier,
 			  1.0f, 0.00f,   3.0f, 0.05f, "%.2fx", "Multiplies the weapon's base sway. Attachment bonuses still add on\ntop. 0 removes weapon sway." },
-			{ "ADS Speed",          "ads",      &SDK::UCrWeaponAttributeSet::ADS_TransitionSpeedModMultiplier,
+			{ "ADS Speed",          "ads",      &BetterCheats::Fields::CrWeaponAttributeSet_ADS_TransitionSpeedModMultiplier,
 			  1.0f, 0.10f,   5.0f, 0.05f, "%.2fx", "Multiplies the weapon's base aim-down-sights transition speed.\nAttachment bonuses still add on top." },
-			{ "Enemies Hit / Shot", "pierce",   &SDK::UCrWeaponAttributeSet::PossibleEnemiesHitPerTrace,
+			{ "Enemies Hit / Shot", "pierce",   &BetterCheats::Fields::CrWeaponAttributeSet_PossibleEnemiesHitPerTrace,
 			  1.0f, 1.00f,  10.0f, 1.0f,  "%.0f",  "Projectile piercing -- how many enemies one shot passes through." },
 		};
 
@@ -2107,7 +2108,10 @@ namespace BetterCheats::Panels::Weapons
 					if (a == kAttrMagazine)
 						continue;   // composes onto the weapon data asset instead -- see below
 
-					SDK::FGameplayAttributeData& attr = weapons->*kAttrs[a].member;
+					SDK::FGameplayAttributeData* attrField = kAttrs[a].member->In(weapons);
+					if (!attrField)
+						continue;
+					SDK::FGameplayAttributeData& attr = *attrField;
 					const std::string key = std::string("playerWeapons.compose.") + kAttrs[a].key;
 
 					// One Hit Kill: Absolute wins outright (ignores baseValue); Release()
@@ -2408,7 +2412,8 @@ namespace BetterCheats::Panels::Weapons
 				for (int a = 0; a < kAttrCount; ++a)
 				{
 					if (a == kAttrMagazine) continue;
-					g_composed[a].Release(weapons, (weapons->*kAttrs[a].member).CurrentValue);
+					if (SDK::FGameplayAttributeData* attr = kAttrs[a].member->In(weapons))
+						g_composed[a].Release(weapons, attr->CurrentValue);
 					BetterCheats::ClearComposeState(std::string("playerWeapons.compose.") + kAttrs[a].key);
 				}
 			}

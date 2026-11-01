@@ -1,4 +1,5 @@
 #include "player_movement.h"
+#include "map_fields.h"
 #include "plugin_helpers.h"
 #include "plugin_config.h"
 #include "cheat_menu.h"
@@ -381,32 +382,33 @@ namespace BetterCheats::Panels::Movement
 		// pointer-to-member array (as player_weapons.cpp uses for its one class)
 		// can't span all of them without type erasure. Three small typed binding
 		// tables instead -- still declarative, still a one-line add per attribute.
-		using MoveAttr  = SDK::FGameplayAttributeData SDK::UCrMovementAttributeSet::*;
-		using SpeedAttr = SDK::FGameplayAttributeData SDK::UCrMovementSpeedMultiplierAttributeSet::*;
-		using GemAttr   = SDK::FGameplayAttributeData SDK::UCrGemAttributeSet::*;
+		using AttrField = const PluginField<SDK::FGameplayAttributeData>*;
+		using MoveAttr  = AttrField;
+		using SpeedAttr = AttrField;
+		using GemAttr   = AttrField;
 
 		struct MoveBinding  { int attr; MoveAttr  member; };
 		struct SpeedBinding { int attr; SpeedAttr member; };
 		struct GemBinding   { int attr; GemAttr   member; };
 
 		const MoveBinding kMoveBindings[] = {
-			{ kAttrSprintSpeed, &SDK::UCrMovementAttributeSet::SprintSpeedMultiplier },
-			{ kAttrJumpHeight,  &SDK::UCrMovementAttributeSet::JumpMultiplier },
+			{ kAttrSprintSpeed, &BetterCheats::Fields::CrMovementAttributeSet_SprintSpeedMultiplier },
+			{ kAttrJumpHeight,  &BetterCheats::Fields::CrMovementAttributeSet_JumpMultiplier },
 		};
 
 		const SpeedBinding kSpeedBindings[] = {
-			{ kAttrMoveSpeed,    &SDK::UCrMovementSpeedMultiplierAttributeSet::CurrentMovementSpeedMultiplier },
-			{ kAttrMoveSpeedMax, &SDK::UCrMovementSpeedMultiplierAttributeSet::MaxMovementSpeedMultiplier },
-			{ kAttrMoveSpeedMin, &SDK::UCrMovementSpeedMultiplierAttributeSet::MinMovementSpeedMultiplier },
+			{ kAttrMoveSpeed,    &BetterCheats::Fields::CrMovementSpeedMultiplierAttributeSet_CurrentMovementSpeedMultiplier },
+			{ kAttrMoveSpeedMax, &BetterCheats::Fields::CrMovementSpeedMultiplierAttributeSet_MaxMovementSpeedMultiplier },
+			{ kAttrMoveSpeedMin, &BetterCheats::Fields::CrMovementSpeedMultiplierAttributeSet_MinMovementSpeedMultiplier },
 		};
 
 		const GemBinding kGemBindings[] = {
-			{ kAttrStaminaRegen,      &SDK::UCrGemAttributeSet::StaminaRegenMultiplier },
-			{ kAttrSlideStaminaRegen, &SDK::UCrGemAttributeSet::SlideStaminaRegenMultiplier },
-			{ kAttrDodgeCost,         &SDK::UCrGemAttributeSet::DodgeCostMultiplier },
-			{ kAttrDoubleJumpCost,    &SDK::UCrGemAttributeSet::DoubleJumpCostMultiplier },
-			{ kAttrFallDamage,        &SDK::UCrGemAttributeSet::FallDamageMultiplier },
-			{ kAttrZiplineSpeed,      &SDK::UCrGemAttributeSet::ZiplineSpeedMultiplier },
+			{ kAttrStaminaRegen,      &BetterCheats::Fields::CrGemAttributeSet_StaminaRegenMultiplier },
+			{ kAttrSlideStaminaRegen, &BetterCheats::Fields::CrGemAttributeSet_SlideStaminaRegenMultiplier },
+			{ kAttrDodgeCost,         &BetterCheats::Fields::CrGemAttributeSet_DodgeCostMultiplier },
+			{ kAttrDoubleJumpCost,    &BetterCheats::Fields::CrGemAttributeSet_DoubleJumpCostMultiplier },
+			{ kAttrFallDamage,        &BetterCheats::Fields::CrGemAttributeSet_FallDamageMultiplier },
+			{ kAttrZiplineSpeed,      &BetterCheats::Fields::CrGemAttributeSet_ZiplineSpeedMultiplier },
 		};
 
 		// Same contract as SafeMultiplier, for the gameplay-attribute half.
@@ -501,15 +503,18 @@ namespace BetterCheats::Panels::Movement
 			{
 				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
 					for (const MoveBinding& b : kMoveBindings)
-						ApplyAttrRow(set, set->*b.member, b.attr);
+						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
+							ApplyAttrRow(set, *attr, b.attr);
 
 				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
 					for (const SpeedBinding& b : kSpeedBindings)
-						ApplyAttrRow(set, set->*b.member, b.attr);
+						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
+							ApplyAttrRow(set, *attr, b.attr);
 
 				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
 					for (const GemBinding& b : kGemBindings)
-						ApplyAttrRow(set, set->*b.member, b.attr);
+						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
+							ApplyAttrRow(set, *attr, b.attr);
 
 				if (!g_loggedTickFill.exchange(true))
 					LOG_INFO("Movement: live values first filled by Tick.");
@@ -640,47 +645,56 @@ namespace BetterCheats::Panels::Movement
 			return std::string("playerMovement.baseline.") + leaf;
 		}
 
-		// Pointer-to-member tables. Two owners, both per-player instances.
+		// Binding tables. Two owners, both per-player instances. A game-declared
+		// member is a map field; one the engine's UCharacterMovementComponent
+		// declares stays a compile-time pointer to member, which the engine
+		// version fixes.
 		using CompF = float SDK::UCrCharacterMovementComponent::*;
-		using CharF = float SDK::ACrCharacterPlayerBase::*;
+		using FloatField = const PluginField<float>*;
 
-		struct CompBind { int raw; CompF member; };
-		struct CharBind { int raw; CharF member; };
+		struct CompBind { int raw; FloatField field; CompF engine; };
+		struct CharBind { int raw; FloatField field; };
+
+		// The row's float in the component, or null when the field did not resolve.
+		float* CompSlot(SDK::UCrCharacterMovementComponent* move, const CompBind& bind)
+		{
+			return bind.field ? bind.field->In(move) : &(move->*bind.engine);
+		}
 
 		const CompBind kCompBinds[] = {
-			{ kRawMaxAccel,       &SDK::UCrCharacterMovementComponent::MaxAcceleration },
-			{ kRawGroundFriction, &SDK::UCrCharacterMovementComponent::GroundFriction },
-			{ kRawBrakingWalk,    &SDK::UCrCharacterMovementComponent::BrakingDecelerationWalking },
-			{ kRawJumpZ,          &SDK::UCrCharacterMovementComponent::JumpZVelocity },
-			{ kRawGravity,        &SDK::UCrCharacterMovementComponent::GravityScale },
-			{ kRawAirControl,     &SDK::UCrCharacterMovementComponent::AirControl },
-			{ kRawStepHeight,     &SDK::UCrCharacterMovementComponent::MaxStepHeight },
-			{ kRawAirFriction,    &SDK::UCrCharacterMovementComponent::FallingLateralFriction },
-			{ kRawCoyote,         &SDK::UCrCharacterMovementComponent::CoyoteTime },
-			{ kRawDashDistance,   &SDK::UCrCharacterMovementComponent::MaxDashDistance },
-			{ kRawDashDuration,   &SDK::UCrCharacterMovementComponent::DashDuration },
-			{ kRawDashCooldown,   &SDK::UCrCharacterMovementComponent::DashCooldownSeconds },
-			{ kRawDashEnergy,     &SDK::UCrCharacterMovementComponent::DashEnergyCostBase },
-			{ kRawSlideMaxSpeed,  &SDK::UCrCharacterMovementComponent::MaxSlideSpeed },
-			{ kRawSlideImpulse,   &SDK::UCrCharacterMovementComponent::SlideEnterImpulse },
-			{ kRawSlideGravity,   &SDK::UCrCharacterMovementComponent::SlideGravityForce },
-			{ kRawSlideFriction,  &SDK::UCrCharacterMovementComponent::SlideFrictionFactor },
-			{ kRawZipSpeed,       &SDK::UCrCharacterMovementComponent::DefaultZiplineSpeed },
-			{ kRawZipAccel,       &SDK::UCrCharacterMovementComponent::DefaultZiplineAcceleration },
-			{ kRawJumpEnergy,     &SDK::UCrCharacterMovementComponent::JumpEnergyCost },
+			{ kRawMaxAccel,       nullptr, &SDK::UCrCharacterMovementComponent::MaxAcceleration },
+			{ kRawGroundFriction, nullptr, &SDK::UCrCharacterMovementComponent::GroundFriction },
+			{ kRawBrakingWalk,    nullptr, &SDK::UCrCharacterMovementComponent::BrakingDecelerationWalking },
+			{ kRawJumpZ,          nullptr, &SDK::UCrCharacterMovementComponent::JumpZVelocity },
+			{ kRawGravity,        nullptr, &SDK::UCrCharacterMovementComponent::GravityScale },
+			{ kRawAirControl,     nullptr, &SDK::UCrCharacterMovementComponent::AirControl },
+			{ kRawStepHeight,     nullptr, &SDK::UCrCharacterMovementComponent::MaxStepHeight },
+			{ kRawAirFriction,    nullptr, &SDK::UCrCharacterMovementComponent::FallingLateralFriction },
+			{ kRawCoyote,         &BetterCheats::Fields::CrCharacterMovementComponent_CoyoteTime, nullptr },
+			{ kRawDashDistance,   &BetterCheats::Fields::CrCharacterMovementComponent_MaxDashDistance, nullptr },
+			{ kRawDashDuration,   &BetterCheats::Fields::CrCharacterMovementComponent_DashDuration, nullptr },
+			{ kRawDashCooldown,   &BetterCheats::Fields::CrCharacterMovementComponent_DashCooldownSeconds, nullptr },
+			{ kRawDashEnergy,     &BetterCheats::Fields::CrCharacterMovementComponent_DashEnergyCostBase, nullptr },
+			{ kRawSlideMaxSpeed,  &BetterCheats::Fields::CrCharacterMovementComponent_MaxSlideSpeed, nullptr },
+			{ kRawSlideImpulse,   &BetterCheats::Fields::CrCharacterMovementComponent_SlideEnterImpulse, nullptr },
+			{ kRawSlideGravity,   &BetterCheats::Fields::CrCharacterMovementComponent_SlideGravityForce, nullptr },
+			{ kRawSlideFriction,  &BetterCheats::Fields::CrCharacterMovementComponent_SlideFrictionFactor, nullptr },
+			{ kRawZipSpeed,       &BetterCheats::Fields::CrCharacterMovementComponent_DefaultZiplineSpeed, nullptr },
+			{ kRawZipAccel,       &BetterCheats::Fields::CrCharacterMovementComponent_DefaultZiplineAcceleration, nullptr },
+			{ kRawJumpEnergy,     &BetterCheats::Fields::CrCharacterMovementComponent_JumpEnergyCost, nullptr },
 		};
 		constexpr int kCompBindCount = static_cast<int>(sizeof(kCompBinds) / sizeof(kCompBinds[0]));
 
 		const CharBind kCharBinds[] = {
-			{ kRawNormalSpeed,      &SDK::ACrCharacterPlayerBase::NormalMoveSpeed },
-			{ kRawSprintSpeed,      &SDK::ACrCharacterPlayerBase::SprintMoveSpeed },
-			{ kRawCrouchSpeed,      &SDK::ACrCharacterPlayerBase::CrouchedMoveSpeed },
-			{ kRawADSSpeed,         &SDK::ACrCharacterPlayerBase::ADSMoveSpeed },
-			{ kRawAccel,            &SDK::ACrCharacterPlayerBase::AccelerationAndDeceleration },
-			{ kRawSprintRamp,       &SDK::ACrCharacterPlayerBase::DurationOfAccelerationToSprint },
-			{ kRawSprintDrain,      &SDK::ACrCharacterPlayerBase::EnergyLoweringMultiplierDuringSprint },
-			{ kRawRegenRate,        &SDK::ACrCharacterPlayerBase::NormalEnergyRestorationRate },
-			{ kRawDoubleJumpEnergy, &SDK::ACrCharacterPlayerBase::DoubleJumpEnergyUsage },
+			{ kRawNormalSpeed,      &BetterCheats::Fields::CrCharacterPlayerBase_NormalMoveSpeed },
+			{ kRawSprintSpeed,      &BetterCheats::Fields::CrCharacterPlayerBase_SprintMoveSpeed },
+			{ kRawCrouchSpeed,      &BetterCheats::Fields::CrCharacterPlayerBase_CrouchedMoveSpeed },
+			{ kRawADSSpeed,         &BetterCheats::Fields::CrCharacterPlayerBase_ADSMoveSpeed },
+			{ kRawAccel,            &BetterCheats::Fields::CrCharacterPlayerBase_AccelerationAndDeceleration },
+			{ kRawSprintRamp,       &BetterCheats::Fields::CrCharacterPlayerBase_DurationOfAccelerationToSprint },
+			{ kRawSprintDrain,      &BetterCheats::Fields::CrCharacterPlayerBase_EnergyLoweringMultiplierDuringSprint },
+			{ kRawRegenRate,        &BetterCheats::Fields::CrCharacterPlayerBase_NormalEnergyRestorationRate },
+			{ kRawDoubleJumpEnergy, &BetterCheats::Fields::CrCharacterPlayerBase_DoubleJumpEnergyUsage },
 		};
 		constexpr int kCharBindCount = static_cast<int>(sizeof(kCharBinds) / sizeof(kCharBinds[0]));
 
@@ -696,10 +710,12 @@ namespace BetterCheats::Panels::Movement
 			if (!move) return;
 
 			for (int i = 0; i < kCompBindCount; ++i)
-				g_rawBaseline[kCompBinds[i].raw].store(move->*kCompBinds[i].member);
+				if (float* slot = CompSlot(move, kCompBinds[i]))
+					g_rawBaseline[kCompBinds[i].raw].store(*slot);
 
 			for (int i = 0; i < kCharBindCount; ++i)
-				g_rawBaseline[kCharBinds[i].raw].store(character->*kCharBinds[i].member);
+				if (float* slot = kCharBinds[i].field->In(character))
+					g_rawBaseline[kCharBinds[i].raw].store(*slot);
 
 			g_rawBaseline[kRawAirDashes].store(static_cast<float>(move->MaxAirDashesToExecute));
 
@@ -757,7 +773,9 @@ namespace BetterCheats::Panels::Movement
 			for (int i = 0; i < kCompBindCount; ++i)
 			{
 				const int r = kCompBinds[i].raw;
-				float& field = move->*kCompBinds[i].member;
+				float* slot = CompSlot(move, kCompBinds[i]);
+				if (!slot) continue;
+				float& field = *slot;
 				const float gameBefore = field;
 				const bool  active     = IsRawActive(r);
 				const float want       = g_rawBaseline[r].load() * SafeMultiplier(r);
@@ -769,7 +787,9 @@ namespace BetterCheats::Panels::Movement
 			for (int i = 0; i < kCharBindCount; ++i)
 			{
 				const int r = kCharBinds[i].raw;
-				float& field = character->*kCharBinds[i].member;
+				float* slot = kCharBinds[i].field->In(character);
+				if (!slot) continue;
+				float& field = *slot;
 				const float gameBefore = field;
 				const bool  active     = IsRawActive(r);
 				const float want       = g_rawBaseline[r].load() * SafeMultiplier(r);
@@ -838,10 +858,18 @@ namespace BetterCheats::Panels::Movement
 			const float baseline = g_rawBaseline[raw].load();
 
 			for (int i = 0; i < kCompBindCount; ++i)
-				if (kCompBinds[i].raw == raw) { move->*kCompBinds[i].member = baseline; return; }
+				if (kCompBinds[i].raw == raw)
+				{
+					if (float* slot = CompSlot(move, kCompBinds[i])) *slot = baseline;
+					return;
+				}
 
 			for (int i = 0; i < kCharBindCount; ++i)
-				if (kCharBinds[i].raw == raw) { character->*kCharBinds[i].member = baseline; return; }
+				if (kCharBinds[i].raw == raw)
+				{
+					if (float* slot = kCharBinds[i].field->In(character)) *slot = baseline;
+					return;
+				}
 
 			if (raw == kRawAirDashes)
 				move->MaxAirDashesToExecute = static_cast<int>(baseline + 0.5f);
@@ -1415,21 +1443,24 @@ namespace BetterCheats::Panels::Movement
 				if (SDK::UCrMovementAttributeSet* set = character->MovementAttributes)
 					for (const MoveBinding& b : kMoveBindings)
 					{
-						g_composedAttrs[b.attr].Release(set, (set->*b.member).CurrentValue);
+						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
+							g_composedAttrs[b.attr].Release(set, attr->CurrentValue);
 						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
 					}
 
 				if (SDK::UCrMovementSpeedMultiplierAttributeSet* set = character->MovementSpeedMultiplierAttributes)
 					for (const SpeedBinding& b : kSpeedBindings)
 					{
-						g_composedAttrs[b.attr].Release(set, (set->*b.member).CurrentValue);
+						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
+							g_composedAttrs[b.attr].Release(set, attr->CurrentValue);
 						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
 					}
 
 				if (SDK::UCrGemAttributeSet* set = character->GemAttributes)
 					for (const GemBinding& b : kGemBindings)
 					{
-						g_composedAttrs[b.attr].Release(set, (set->*b.member).CurrentValue);
+						if (SDK::FGameplayAttributeData* attr = b.member->In(set))
+							g_composedAttrs[b.attr].Release(set, attr->CurrentValue);
 						BetterCheats::ClearComposeState(std::string("playerMovement.compose.") + kAttrs[b.attr].key);
 					}
 
