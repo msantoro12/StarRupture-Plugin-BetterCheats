@@ -774,9 +774,16 @@ namespace BetterCheats::Panels::Inventory
 		// the render thread) may have left its write in place, and
 		// RestoreIfStale maps that back to the base it saved. Returns false
 		// while no session config is loaded, since the saved pair can't be read
-		// yet and a leftover would be taken for the base.
+		// yet and a leftover would be taken for the base. When this build gives no
+		// session name nothing is saved, so there is no leftover to map back and
+		// the value it holds now is the base.
 		bool RecoverOriginal(const std::string& key, int current, int& original)
 		{
+			if (!SessionConfig::Available())
+			{
+				original = current;
+				return true;
+			}
 			if (!SessionConfig::IsLoaded())
 				return false;
 

@@ -90,7 +90,7 @@ namespace BetterCheats::SessionConfig
 		std::string ResolveSessionName()
 		{
 			// Without the session name there is no session to key the file on: nothing is loaded or saved.
-			if (!Features::SessionFiles.On())
+			if (!Available())
 				return "";
 
 			try
@@ -237,6 +237,11 @@ namespace BetterCheats::SessionConfig
 		++g_generation;
 		LOG_INFO("SessionConfig: loaded session '%s' (%s).", g_sessionName.c_str(), configPath.c_str());
 		return true;
+	}
+
+	bool Available()
+	{
+		return Features::SessionFiles.On();
 	}
 
 	bool IsLoaded()

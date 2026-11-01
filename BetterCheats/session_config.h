@@ -21,6 +21,10 @@ namespace BetterCheats::SessionConfig
 	// Returns false if no session is currently active.
 	bool Reload();
 
+	// False when this game build gives no session name, so no session config will
+	// ever load: callers that wait for one must carry on instead.
+	bool Available();
+
 	// True once Reload() has resolved a session and loaded (or created) its config.
 	bool IsLoaded();
 
