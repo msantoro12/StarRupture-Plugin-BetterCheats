@@ -90,8 +90,10 @@ namespace BetterCheats::Fields
 	// UCrEnviroWaveTimerSubsystem: the countdown to the next rupture. The SDK folds
 	// everything before TimerActor into Pad_30; Tick() only decrements NextWaveTimer
 	// while !bPause && bWaitingForNextWave, and the block is persisted into the save,
-	// so a bad value survives a reload.
-	inline auto CrEnviroWaveTimerSubsystem_WaitingDuration     = BC_NATIVE(float, UCrEnviroWaveTimerSubsystem, WaitingDuration, 0x78);
+	// so a bad value survives a reload. WaitingDuration (0x78 on CL-127004) is not
+	// a member of this class on CL-128786, and a native that cannot resolve would
+	// refuse the whole plugin there, so it is not requested: world_wave.cpp keeps
+	// the calm length it reads from NextWaveTimer instead.
 	inline auto CrEnviroWaveTimerSubsystem_NextWaveTimer       = BC_NATIVE(float, UCrEnviroWaveTimerSubsystem, NextWaveTimer, 0x7C);
 	inline auto CrEnviroWaveTimerSubsystem_bWaitingForNextWave = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bWaitingForNextWave, 0x80);
 	inline auto CrEnviroWaveTimerSubsystem_bPause              = BC_NATIVE(bool, UCrEnviroWaveTimerSubsystem, bPause, 0x81);
@@ -382,6 +384,8 @@ namespace BetterCheats::Fields
 
 	// A reference to the member, or to a scratch value when the pointer is null (object null or member
 	// unresolved), so a compose helper that wants a float& never dereferences null.
+	// The scratch is shared by every caller of the same type that gets a null, so
+	// only pass a pointer that was checked or whose result is discarded.
 	template <class T>
 	T& Ref(T* at)
 	{
@@ -394,7 +398,7 @@ namespace BetterCheats::Fields
 	inline bool Resolve(IPluginSelf* self, IPluginHookScanner* scanner)
 	{
 		bool all = PluginMap::ResolveFields(scanner, self,
-			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings, CrEnviroWaveTimerSubsystem_WaitingDuration,
+			CrGameInstance_ServerSessionName, CrTechnologyKeeper_bUnlockAllBuildings,
 			CrEnviroWaveTimerSubsystem_NextWaveTimer, CrEnviroWaveTimerSubsystem_bWaitingForNextWave, CrEnviroWaveTimerSubsystem_bPause,
 			CrEnviroWaveTimerSubsystem_bStopWaves, CrUW_InventoryContainer_InventoryComponent,
 			AuAddedItem_Size, CrSkillData_Size, CrElectricityParameters_Size,

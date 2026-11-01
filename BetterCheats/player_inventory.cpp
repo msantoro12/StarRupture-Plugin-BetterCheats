@@ -653,7 +653,7 @@ namespace BetterCheats::Panels::Inventory
 		}
 
 		// =====================================================================
-		// Item stack sizes. UAuItemDataBase::MaxStack is a plain int32_t
+		// Item stack sizes. UAuItemDataBase::MaxStack is a plain int32
 		// on the item TYPE's own CDO (AuItems_classes.hpp:290) -- same per-
 		// type-CDO shape as the weapon magazine/grenade fields in
 		// player_weapons.cpp, so it uses the exact same capture/write/restore/
@@ -709,7 +709,7 @@ namespace BetterCheats::Panels::Inventory
 		// Every tier sets an absolute stack size, and a size only ever RAISES
 		// an item: one whose own MaxStack is already higher keeps it, so no
 		// setting can shrink a cap below what a player is already holding.
-		// That makes 1 the global "off" value. MaxStack is a plain int32_t
+		// That makes 1 the global "off" value. MaxStack is a plain int32
 		// with no engine-side limit; 9999 keeps the slider usable and the
 		// count readable in an inventory slot.
 		constexpr int kStackFloor   = 1;
@@ -1630,7 +1630,7 @@ namespace BetterCheats::Panels::Inventory
 		constexpr float kGatherMultMax     = 5.0f;
 
 		// Sanity clamp on the multiplied result, same spirit as kStackCeiling
-		// above -- ResourceCount is a plain int32_t with no engine-side range
+		// above -- ResourceCount is a plain int32 with no engine-side range
 		// check of its own.
 		constexpr int kGatherResourceCeiling = 1000000;
 

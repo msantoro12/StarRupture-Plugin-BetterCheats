@@ -24,6 +24,11 @@ namespace BetterCheats::Panels::Wave
 		static SDK::UCrEnviroWaveTimerSubsystem* g_timerSubsys = nullptr;
 		static bool                              g_scanned     = false;
 
+		// The configured calm length. The game assigns NextWaveTimer from its
+		// WaitingDuration and the cheat only ever writes it back, so the largest
+		// value seen between waves is that length. Zero until one is seen.
+		static float                             g_calmLength  = 0.0f;
+
 		// The subsystems don't necessarily exist on the first tick after world begin
 		// play, and giving up after a single miss left the panel dead for the rest of
 		// the session — retry on a slow cadence, then stop so a genuinely absent
@@ -86,6 +91,7 @@ namespace BetterCheats::Panels::Wave
 		{
 			g_waveSubsys  = nullptr;
 			g_timerSubsys = nullptr;
+			g_calmLength  = 0.0f;
 			++g_scanAttempts;
 
 			FindWaveSubsystems();
@@ -182,6 +188,8 @@ namespace BetterCheats::Panels::Wave
 					snap.timerPaused        = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bPause, false);
 					snap.stopWaves          = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_bStopWaves, false);
 					snap.secondsRemaining   = TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer, 0.0f);
+					if (!snap.inProgress && snap.secondsRemaining > g_calmLength)
+						g_calmLength = snap.secondsRemaining;
 				}
 				catch (...)
 				{
@@ -243,7 +251,8 @@ namespace BetterCheats::Panels::Wave
 			if (!g_timerSubsys)
 				return;
 
-			TimerWrite(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer, TimerRead(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_WaitingDuration, 0.0f));
+			if (g_calmLength > 0.0f)
+				TimerWrite(BetterCheats::Fields::CrEnviroWaveTimerSubsystem_NextWaveTimer, g_calmLength);
 			// Sets bWaitingForNextWave, clears bStopWaves and re-arms the HUD's NextTime.
 			g_timerSubsys->WavesActive(true);
 			const bool paused = g_pauseWavesEnabled.load();
@@ -334,6 +343,7 @@ namespace BetterCheats::Panels::Wave
 		{
 			g_waveSubsys     = nullptr;
 			g_timerSubsys    = nullptr;
+			g_calmLength     = 0.0f;
 			g_pauseWritten   = false;
 			g_scanned        = false;
 			g_scanRetryTimer = 0.0f;
