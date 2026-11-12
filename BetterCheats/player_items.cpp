@@ -538,7 +538,7 @@ namespace BetterCheats::Panels::Items
 				imgui->SetCursorPosY(rowTopY + (rowH - textLineH * 2.0f) * 0.5f);
 
 				// Icon: the image library loads it once the row is on screen. Until
-				// then, and on a loader without the library, the space stays empty.
+				// then, and where the hooks have no image table, the space stays empty.
 				imgui->SetCursorPosX(imgui->GetCursorPosX() + padX);
 				PluginImages::Image(imgui, GetHooks(), entry.imageId, iconSz, iconSz);
 				imgui->SameLine(0.0f, padX);
