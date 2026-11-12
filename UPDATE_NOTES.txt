@@ -1,1 +1,1 @@
-- Item spawner icons now load only for the rows you stop on, plus a few around them, a few at a time. Dragging the scrollbar fast no longer starts loading every icon
+- Item spawner icons now come from the loader's image library. They load for the rows on screen, and a row shows an empty slot until its icon is ready
