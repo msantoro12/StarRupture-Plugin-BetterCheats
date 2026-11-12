@@ -437,6 +437,10 @@ namespace BetterCheats::Panels::Items
 		ResolveAddNewItem();
 
 		IPluginSelf* self = GetSelf();
+		IPluginHooks* hooks = GetHooks();
+		if (hooks && hooks->Images && self)
+			hooks->Images->UseSets(self, PLUGIN_IMAGE_SET_ITEMS);
+
 		IPluginSplash* splash = (self && self->hooks) ? self->hooks->Splash : nullptr;
 		if (splash && splash->IsVisible())
 			splash->AcquireSplashHold();

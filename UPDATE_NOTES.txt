@@ -1,1 +1,2 @@
 - Item spawner icons now come from the loader's image library. They load for the rows on screen, and a row shows an empty slot until its icon is ready
+- The item list is registered with the image library at start, so its icons can be prepared ahead of the first time you open the page
