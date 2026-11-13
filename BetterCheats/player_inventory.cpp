@@ -1082,6 +1082,10 @@ namespace BetterCheats::Panels::Inventory
 						if (entry.name.size() >= 9 && entry.name.compare(entry.name.size() - 9, 9, "Blueprint") == 0)
 							continue;
 						if (entry.uniqueName.empty()) continue;   // nothing to key an override against
+						// Several items leave UniqueItemName unset ("None"); the object's own
+						// name keeps their overrides apart.
+						if (entry.uniqueName == "None")
+							entry.uniqueName = item->GetName();
 
 						auto known = g_stackOriginals.find(entry.uniqueName);
 						if (known != g_stackOriginals.end())

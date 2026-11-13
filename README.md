@@ -61,7 +61,7 @@ Tick **Locked** and an attribute is held at its slider value, even with the menu
 
 Search the item list (icon, name, stack size), set **Stacks** (1 or more) and press **Give Item**. You get stacks x stack size, shown as `xN (stack S)`. The page says so if the game build doesn't expose what it needs.
 
-Icons come from the loader's image library. They load for the rows on screen, and a row shows an empty slot until its icon is ready, so names stay lined up while icons fill in.
+Icons come from the loader's image library. They load for the rows on screen, and a row shows an empty slot until its icon is ready, so names stay lined up while icons fill in. Ammo and each building blueprint show their own icon.
 
 ### Inventory
 

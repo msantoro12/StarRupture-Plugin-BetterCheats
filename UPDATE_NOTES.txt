@@ -1,2 +1,4 @@
 - Item spawner icons now come from the loader's image library. They load for the rows on screen, and a row shows an empty slot until its icon is ready
 - The item list is registered with the image library at start. Its icons load when the page shows them, or ahead of time if you turn on the loader's preload setting
+
+- The item spawner now shows Ammo and the building blueprints with their own pictures. They used to all draw the Ammo picture. The same items now also keep separate Item Stack Sizes rows and settings
