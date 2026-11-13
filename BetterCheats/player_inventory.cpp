@@ -1072,20 +1072,16 @@ namespace BetterCheats::Panels::Inventory
 						StackEntry entry;
 						entry.item.Set(item);
 						entry.assetData  = assetData[i];
-						entry.uniqueName = BetterCheats::Fields::UniqueNameOf(item);
+						entry.uniqueName = BetterCheats::Fields::ItemKeyOf(item);
 						entry.name       = BetterCheats::Fields::DisplayNameOf(item);
 						if (entry.name.empty() || entry.name == "<MISSING STRING TABLE ENTRY>")
-							entry.name = entry.uniqueName;
+							entry.name = BetterCheats::Fields::UniqueNameOf(item);
 
 						// Same placeholder/Blueprint-asset filtering player_items.cpp uses.
 						if (entry.name == "None") continue;
 						if (entry.name.size() >= 9 && entry.name.compare(entry.name.size() - 9, 9, "Blueprint") == 0)
 							continue;
 						if (entry.uniqueName.empty()) continue;   // nothing to key an override against
-						// Several items leave UniqueItemName unset ("None"); the object's own
-						// name keeps their overrides apart.
-						if (entry.uniqueName == "None")
-							entry.uniqueName = item->GetName();
 
 						auto known = g_stackOriginals.find(entry.uniqueName);
 						if (known != g_stackOriginals.end())
@@ -2055,7 +2051,10 @@ namespace BetterCheats::Panels::Inventory
 				for (const auto& e : arr)
 				{
 					const std::string uniqueName = e.value("uniqueName", std::string());
-					if (uniqueName.empty() || !e.contains("value") || !e["value"].is_number())
+					// A size saved under "None" (before unnamed items had keys of their
+					// own) covered every unnamed item at once; it fits none of them now.
+					if (uniqueName.empty() || uniqueName == BetterCheats::Fields::kUnsetUniqueName
+						|| !e.contains("value") || !e["value"].is_number())
 						continue;
 					loaded[uniqueName] = ClampStackValue(e["value"].get<int>());
 				}

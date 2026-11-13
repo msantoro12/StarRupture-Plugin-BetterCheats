@@ -84,6 +84,7 @@ Raises stack caps from 1 to 9999 as one global value, per category (Combat, Reso
 - New stacks only: existing stacks keep their cap until picked up, split or merged.
 - Raise-only: an item that already stacks higher keeps its size.
 - Non-stacking items are shown but locked.
+- Ammo and each blueprint have their own row. A size you set for one of them before this version has to be set again.
 
 ### Weapon <sup>[✦](#msantoro12)</sup>
 

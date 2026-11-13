@@ -33,8 +33,7 @@ namespace BetterCheats::Panels::Items
 			SDK::FAssetData       assetData;        // re-resolve the CDO fresh at give-time — a cached CDO can be garbage-collected
 			                                         // if its Blueprint class/package gets unloaded before "Give Item" is clicked.
 			std::string           name;
-			std::string           uniqueName;     // item->UniqueItemName — passed to ServerDebugAddItems
-			std::string           imageName;      // what the image table is asked for; see the scan
+			std::string           uniqueName;     // Fields::ItemKeyOf(item): the unique name, or the asset name where there is none
 			int                   maxStack        = 1;
 			PluginImageId         imageId         = 0;      // from the image table; 0 where the loader has none
 		};
@@ -223,14 +222,10 @@ namespace BetterCheats::Panels::Items
 						if (icon) { try { iconIsTexture2D = icon->IsA(SDK::UTexture2D::StaticClass()); } catch (...) {} }
 						const int stackSize = BetterCheats::Fields::ValueOr(BetterCheats::Fields::AuItemDataBase_MaxStack, item);
 						entry.maxStack   = stackSize > 0 ? stackSize : 1;
-						entry.uniqueName = BetterCheats::Fields::UniqueNameOf(item);
-						// Ammo and the blueprints leave UniqueItemName unset ("None"), so they
-						// are asked for by the item object's name. Taken here, on the game
-						// thread; AssignImageIds runs on the render thread.
-						entry.imageName  = (entry.uniqueName.empty() || entry.uniqueName == "None") ? item->GetName() : entry.uniqueName;
+						entry.uniqueName = BetterCheats::Fields::ItemKeyOf(item);
 						entry.name       = BetterCheats::Fields::DisplayNameOf(item);
 						if (entry.name.empty() || entry.name == "<MISSING STRING TABLE ENTRY>")
-							entry.name = entry.uniqueName;
+							entry.name = BetterCheats::Fields::UniqueNameOf(item);
 
 						// Skip placeholder/stub items that have no real presence in the game.
 						if (entry.name == "None")
@@ -315,7 +310,7 @@ namespace BetterCheats::Panels::Items
 				return;
 
 			for (ItemEntry& entry : g_items)
-				entry.imageId = hooks->Images->Item(self, entry.imageName.c_str());
+				entry.imageId = hooks->Images->Item(self, entry.uniqueName.c_str());
 		}
 
 		// Adopts a freshly-loaded item list, if one is ready, into g_items — called
