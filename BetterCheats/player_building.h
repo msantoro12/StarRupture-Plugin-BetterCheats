@@ -27,7 +27,8 @@ namespace BetterCheats::Panels::Building
 	// Game thread only.
 	void SyncServerBuild();
 
-	// Unlock All Buildings only.
+	// Unlock All Buildings only. `own`: apply this player's own setting too; a
+	// server's unlock is followed either way.
 	void Tick(bool own);
 	void RenderImGui(IModLoaderImGui* imgui);
 
