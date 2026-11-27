@@ -908,7 +908,7 @@ namespace BetterCheats::Panels::Tools
 				boost = last.NumberOr("boost", 1.0f, 10.0f, 1.0f);
 
 			ServerLink::Say(imgui, "The server runs the drill overheat and mining boost cheats here. 1x boost is off.");
-			if (const std::string heat = last.Value("heat"); !heat.empty())
+			if (const std::string heat = last.Value("heat"); last.readBack && !heat.empty())
 				ServerLink::Say(imgui, "No drill overheat on the server: " + heat);
 			if (imgui->SmallButton("No drill overheat: on##server_mine"))
 				ServerLink::Queue(kOp, { { "heat", "on" } });

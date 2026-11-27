@@ -25,8 +25,11 @@ namespace BetterCheats::ServerLink
 		// Every field the server's replies have reported, the latest value of
 		// each. Forgotten on deny and with the connection. Untrusted text.
 		ServerProtocol::Fields fields;
-		// Changes whenever `fields` does, so a menu draft knows to follow them.
+		// Changes with each cheat.state answer and with the connection, so a menu
+		// draft knows to follow `fields`. The player's own requests leave it.
 		uint64_t stamp = 0;
+		// The server has answered cheat.state for this slot.
+		bool readBack = false;
 		// The send order of the newest request whose reply set `fields`. A reply
 		// to an older one does not overwrite them.
 		uint64_t order = 0;
@@ -46,8 +49,8 @@ namespace BetterCheats::ServerLink
 			return ServerProtocol::NumberOr(Value(key), min, max, fallback);
 		}
 
-		// True once each time the fields change, a new connection included, so a
-		// menu draft is reloaded then and left alone while it is being edited.
+		// True once each time `stamp` changes, so a menu draft is reloaded then
+		// and left alone while it is being edited.
 		bool ChangedSince(uint64_t& seen) const
 		{
 			if (stamp == seen)

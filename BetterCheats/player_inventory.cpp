@@ -2704,13 +2704,21 @@ namespace BetterCheats::Panels::Inventory
 
 		// The server's grid goes into the steppers only, never the saved setting.
 		static uint64_t seenServerGrid = 0;
+		static bool     serverInSteppers = false;
 		if (const ServerLink::Result last = ServerLink::LastResult(ServerLink::Op::Grid);
 			!greyed && last.ChangedSince(seenServerGrid))
 		{
-			columns = static_cast<int>(last.NumberOr("cols", static_cast<float>(kMinGridColumns),
-				static_cast<float>(kMaxGridColumns), static_cast<float>(wantColumns)));
-			rows = static_cast<int>(last.NumberOr("rows", static_cast<float>(kMinGridRows),
-				static_cast<float>(kMaxGridRows), static_cast<float>(wantRows)));
+			// With no grid read back, steppers that never held a server's stay as
+			// the player left them.
+			const bool reported = last.readBack && !last.Value("cols").empty();
+			if (reported || serverInSteppers)
+			{
+				columns = static_cast<int>(last.NumberOr("cols", static_cast<float>(kMinGridColumns),
+					static_cast<float>(kMaxGridColumns), static_cast<float>(wantColumns)));
+				rows = static_cast<int>(last.NumberOr("rows", static_cast<float>(kMinGridRows),
+					static_cast<float>(kMaxGridRows), static_cast<float>(wantRows)));
+			}
+			serverInSteppers = reported;
 		}
 
 		const bool serverGrid = !greyed && ServerLink::ServerOwns(ServerLink::Rows::Grid);
@@ -2827,7 +2835,7 @@ namespace BetterCheats::Panels::Inventory
 
 			const std::string current = last.Value("size");
 			if (!current.empty())
-				ServerLink::Say(imgui, "In effect: " + (current == "0" ? std::string("the server's own sizes") : current));
+				ServerLink::Say(imgui, "In effect: " + current);
 		}
 	}
 

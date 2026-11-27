@@ -207,8 +207,9 @@ namespace BetterCheats::ServerLink
 			if (!kOps[i].held || !kOps[i].feature->On() || order <= result.order)
 				continue;
 			result.fields = Protocol::HeldFields(state, *kOps[i].held);
-			result.order  = order;
-			result.stamp  = ++g_stamp;
+			result.order    = order;
+			result.stamp    = ++g_stamp;
+			result.readBack = true;
 		}
 	}
 
@@ -266,7 +267,6 @@ namespace BetterCheats::ServerLink
 			if (entry->what.order < result.order)
 				return;
 			result.order = entry->what.order;
-			result.stamp = ++g_stamp;
 			// The count of edited power values only comes with cheat.state, so a
 			// change makes the one held out of date.
 			result.fields.erase(std::remove_if(result.fields.begin(), result.fields.end(),
