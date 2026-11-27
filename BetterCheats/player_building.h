@@ -28,7 +28,7 @@ namespace BetterCheats::Panels::Building
 	void SyncServerBuild();
 
 	// Unlock All Buildings only.
-	void Tick(float deltaSeconds);
+	void Tick(bool own);
 	void RenderImGui(IModLoaderImGui* imgui);
 
 	// Re-applies the toggles persisted in the active session's JSON config
