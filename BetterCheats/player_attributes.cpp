@@ -13,8 +13,11 @@
 #include <cfloat>
 #include <initializer_list>
 #include <mutex>
+#include <optional>
+#include <string>
 #include "plugin_map.h"
 #include "map_fields.h"
+#include "server_link.h"
 
 namespace BetterCheats::Panels::Attributes
 {
@@ -392,6 +395,21 @@ namespace BetterCheats::Panels::Attributes
 				RefreshHealthHudOnGameThread(nullptr);
 		}
 
+		// The locks the server holds for this player, read once a frame by
+		// RenderImGui() for its rows. No value: the rows use their own locks.
+		std::optional<std::string> s_serverLocks;
+
+		// The Locked box of a row whose lock the server holds: it shows what the
+		// server reports, and a click asks the server.
+		void RenderServerLockCheckbox(IModLoaderImGui* imgui, AttrId id)
+		{
+			const char* const stat = ServerProtocol::kStats[static_cast<int>(id)];
+			bool locked = ServerProtocol::ListHas(*s_serverLocks, stat);
+			if (imgui->Checkbox("##locked", &locked))
+				ServerLink::Queue(ServerLink::Op::Stat, { { "stat", stat }, { "lock", locked ? "on" : "off" } });
+			imgui->SetItemTooltip("The server holds this lock.");
+		}
+
 		// -------------------------------------------------------------------------
 		// Shared row widget — one aligned table row: label, a slider that both
 		// displays and edits the live value (dragging it queues a write that
@@ -402,8 +420,9 @@ namespace BetterCheats::Panels::Attributes
 		void RenderAttributeRow(IModLoaderImGui* imgui, const char* label, AttrId id, const AttrSnapshot& attr,
 			const char* snapLabel, float snapTarget, bool greyed)
 		{
-			LockSlot unavailable;
-			LockSlot& lock = greyed ? unavailable : g_locks[static_cast<int>(id)];
+			const bool serverLock = s_serverLocks.has_value();
+			LockSlot unsaved;
+			LockSlot& lock = greyed || serverLock ? unsaved : g_locks[static_cast<int>(id)];
 
 			// While unlocked, keep the slider following the live attribute value;
 			// once locked, it holds steady at the value Tick() pins to.
@@ -426,7 +445,8 @@ namespace BetterCheats::Panels::Attributes
 			if (imgui->SliderFloat("##value", &lock.value, attr.min, attr.max, format))
 			{
 				QueueAttributeEdit(id, lock.value);
-				PersistLock(id, lock);
+				if (!serverLock)
+					PersistLock(id, lock);
 			}
 
 			imgui->TableSetColumnIndex(2);
@@ -434,14 +454,20 @@ namespace BetterCheats::Panels::Attributes
 			{
 				lock.value = snapTarget;
 				QueueAttributeEdit(id, snapTarget);
-				PersistLock(id, lock);
+				if (!serverLock)
+					PersistLock(id, lock);
 			}
 
 			imgui->TableSetColumnIndex(3);
-			const bool wasLocked = lock.locked;
-			RenderLockCheckbox(imgui, lock);
-			if (lock.locked != wasLocked)
-				PersistLock(id, lock);
+			if (serverLock)
+				RenderServerLockCheckbox(imgui, id);
+			else
+			{
+				const bool wasLocked = lock.locked;
+				RenderLockCheckbox(imgui, lock);
+				if (lock.locked != wasLocked)
+					PersistLock(id, lock);
+			}
 
 			imgui->PopID();
 		}
@@ -568,7 +594,8 @@ namespace BetterCheats::Panels::Attributes
 		RefreshSnapshot(character);
 		ApplyPendingEdits(character);
 
-		if (!character)
+		// While the server holds the locks, this plugin's own pin nothing.
+		if (!character || ServerLink::StatLocks())
 			return;
 
 		for (int i = 0; i < kAttrCount; ++i)
@@ -604,6 +631,8 @@ namespace BetterCheats::Panels::Attributes
 			std::lock_guard<std::mutex> lock(g_snapshotMutex);
 			snapshot = g_snapshot;
 		}
+
+		s_serverLocks = greyed ? std::nullopt : ServerLink::StatLocks();
 
 		if (!snapshot.hasCharacter)
 		{
@@ -669,6 +698,12 @@ namespace BetterCheats::Panels::Attributes
 				fields, kFieldCount, getLive, applyFields, isBuiltin, computeSuggest, s_presetRow);
 		}
 		imgui->Spacing();
+
+		if (s_serverLocks)
+		{
+			if (const std::string result = ServerLink::LastResult(ServerLink::Op::Stat).text; !result.empty())
+				ServerLink::Say(imgui, result);
+		}
 
 		imgui->TextWrapped("Tick \"Locked\" to continuously pin an attribute to the value "
 			"set on its slider, even while the menu is closed.");
