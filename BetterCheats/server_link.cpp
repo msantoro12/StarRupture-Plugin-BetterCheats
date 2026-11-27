@@ -491,6 +491,13 @@ namespace BetterCheats::ServerLink
 		return g_cap == Cap::Got && handler.version && !handler.on ? Route::Refused : Route::Local;
 	}
 
+	bool ServerOwns(Row row)
+	{
+		if (!GameContext::IsJoinedClient())
+			return false;
+		return row.without == Without::Grey || RouteOf(row.op) != Route::Local;
+	}
+
 	void Queue(Op op, Protocol::Fields fields)
 	{
 		// Taken first: a click judged against one connection never joins the next.

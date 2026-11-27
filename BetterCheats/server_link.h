@@ -71,6 +71,38 @@ namespace BetterCheats::ServerLink
 	// Any thread.
 	Route RouteOf(Op op);
 
+	// What a joined player's row does while the server can't run its cheat: Grey
+	// greys it under the reason, Own leaves it to this plugin's own switch.
+	enum class Without { Grey, Own };
+
+	struct Row
+	{
+		Op      op;
+		Without without;
+	};
+
+	// The spawner, wave, corporations, enemies, power and stack size rows are not
+	// listed: Features::kNeedsServer holds them on every joined client.
+	namespace Rows
+	{
+		inline constexpr Row WeaponDamage  { Op::Weapon,        Without::Grey };
+		inline constexpr Row WeaponFireRate{ Op::Weapon,        Without::Grey };
+		inline constexpr Row DrillHeat     { Op::Mine,          Without::Grey };
+		inline constexpr Row MiningBoost   { Op::Mine,          Without::Grey };
+		inline constexpr Row PlantPickup   { Op::Plant,         Without::Grey };
+		inline constexpr Row FreeCost      { Op::BuildFree,     Without::Grey };
+		inline constexpr Row FreeStability { Op::BuildFree,     Without::Grey };
+		inline constexpr Row UnlockAll     { Op::BuildUnlock,   Without::Grey };
+		inline constexpr Row Windows       { Op::BuildAnywhere, Without::Own };
+		inline constexpr Row Benches       { Op::BuildAnywhere, Without::Own };
+		inline constexpr Row Grid          { Op::Grid,          Without::Own };
+	}
+
+	// Any thread. Whether this plugin's own switch is held back for the row: only
+	// on a joined client, and for an Own row only while the server runs the cheat,
+	// is being asked or has said no.
+	bool ServerOwns(Row row);
+
 	// Any thread. Ignored while the op is blocked.
 	void Queue(Op op, ServerProtocol::Fields fields);
 
