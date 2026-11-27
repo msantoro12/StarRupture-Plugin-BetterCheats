@@ -698,7 +698,8 @@ namespace BetterCheats::Panels::Attributes
 				fields, kFieldCount, getLive, applyFields, isBuiltin, computeSuggest, s_presetRow);
 		}
 		imgui->Spacing();
-		if (s_serverLocks)
+
+		if (s_serverLocks)
 		{
 			if (const std::string result = ServerLink::LastResult(ServerLink::Op::Stat).text; !result.empty())
 				ServerLink::Say(imgui, result);
