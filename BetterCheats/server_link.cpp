@@ -347,7 +347,6 @@ namespace BetterCheats::ServerLink
 				Protocol::PowerList list = Protocol::ParsePowerList(*reply);
 				g_power.values = std::move(list.entries);
 				g_power.more   = list.more;
-				g_power.listed = true;
 				g_power.note.clear();
 				g_power.stamp  = ++g_stamp;
 				return;

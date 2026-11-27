@@ -67,7 +67,6 @@ namespace BetterCheats::ServerLink
 	{
 		std::vector<ServerProtocol::PowerValue> values;
 		bool        more   = false;   // the server could not list every building
-		bool        listed = false;   // an answer is held
 		// Why the last request for it got no list.
 		std::string note;
 		uint64_t    stamp  = 0;       // changes with the list, as Result::stamp does
