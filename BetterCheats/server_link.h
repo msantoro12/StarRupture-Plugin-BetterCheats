@@ -39,6 +39,22 @@ namespace BetterCheats::ServerLink
 					return field.second;
 			return {};
 		}
+
+		// The same as a number from a control's range, else `fallback`.
+		float NumberOr(const char* key, float min, float max, float fallback) const
+		{
+			return ServerProtocol::NumberOr(Value(key), min, max, fallback);
+		}
+
+		// True once each time the fields change, a new connection included, so a
+		// menu draft is reloaded then and left alone while it is being edited.
+		bool ChangedSince(uint64_t& seen) const
+		{
+			if (stamp == seen)
+				return false;
+			seen = stamp;
+			return true;
+		}
 	};
 
 	// PluginInit / PluginShutdown.
