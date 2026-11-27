@@ -198,7 +198,7 @@ namespace BetterCheats::ServerLink
 		}
 
 		// A cheat.state answer. A slot it does not report is not on, unless a
-	// request sent after this one has already been answered for it.
+		// request sent after this one has already been answered for it.
 	void ApplyStateLocked(const Protocol::Reply& state, uint64_t order)
 	{
 		for (size_t i = 0; i < kOpCount; ++i)
@@ -212,7 +212,7 @@ namespace BetterCheats::ServerLink
 		}
 	}
 
-	void OnMessage(const char* /*pluginName*/, const char* /*typeTag*/, const uint8_t* data, size_t size)
+		void OnMessage(const char* /*pluginName*/, const char* /*typeTag*/, const uint8_t* data, size_t size)
 		{
 			auto reply = Protocol::ParseReply(data, size);
 			if (!reply)
@@ -237,7 +237,7 @@ namespace BetterCheats::ServerLink
 				{
 					g_capReply = std::move(*reply);
 					g_cap = Cap::Got;
-				g_stateWanted = true;
+					g_stateWanted = true;
 				}
 				else if (g_cap == Cap::Got)
 				{
